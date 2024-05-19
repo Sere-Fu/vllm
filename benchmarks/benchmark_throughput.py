@@ -71,6 +71,7 @@ def run_vllm(
     dtype: str,
     max_model_len: Optional[int],
     enforce_eager: bool,
+    disable_custom_all_reduce: bool,
     kv_cache_dtype: str,
     device: str,
 ) -> float:
@@ -85,6 +86,7 @@ def run_vllm(
         dtype=dtype,
         max_model_len=max_model_len,
         enforce_eager=enforce_eager,
+        disable_custom_all_reduce=disable_custom_all_reduce,
         kv_cache_dtype=kv_cache_dtype,
         device=device,
     )
@@ -211,7 +213,8 @@ def main(args: argparse.Namespace):
                                 args.seed, args.n, args.use_beam_search,
                                 args.trust_remote_code, args.dtype,
                                 args.max_model_len, args.enforce_eager,
-                                args.kv_cache_dtype, args.device)
+                                args.disable_custom_all_reduce,
+                                args.kv_cache_dtype, args.device, )
     elif args.backend == "hf":
         assert args.tensor_parallel_size == 1
         elapsed_time = run_hf(requests, args.model, tokenizer, args.n,
@@ -289,6 +292,9 @@ if __name__ == "__main__":
     parser.add_argument("--enforce-eager",
                         action="store_true",
                         help="enforce eager execution")
+    parser.add_argument('--disable-custom-all-reduce',
+                        action='store_true',
+                        help='See ParallelConfig')
     parser.add_argument(
         "--kv-cache-dtype",
         type=str,
