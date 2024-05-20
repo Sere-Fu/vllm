@@ -258,7 +258,8 @@ def init_distributed_environment(
     # A small all_reduce for warmup.
     torch.distributed.all_reduce(torch.zeros(1).cuda())
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
-                                      parallel_config.pipeline_parallel_size)
+                                      parallel_config.pipeline_parallel_size,
+                                      parallel_config.spe_prompt_token)
 
 
 def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype):

@@ -10,6 +10,8 @@ import torch
 _TENSOR_MODEL_PARALLEL_GROUP = None
 # Pipeline model parallel group that the current rank belongs to.
 _PIPELINE_MODEL_PARALLEL_GROUP = None
+# Stage parallel group that the current rank belongs to.
+_STAGE_PARALLEL_GROUP = None
 
 # A list of global ranks for each pipeline group to ease calculation of the
 # source rank when broadcasting from the first or last pipeline stage.
@@ -19,6 +21,7 @@ _PIPELINE_GLOBAL_RANKS = None
 def initialize_model_parallel(
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
+    sep_prompt_token: bool = False,
 ) -> None:
     """
     Initialize model parallel groups.
@@ -46,12 +49,15 @@ def initialize_model_parallel(
     assert torch.distributed.is_initialized()
     world_size: int = torch.distributed.get_world_size()
 
+    scale_factor: int = 2 if sep_prompt_token else 1
+
     if (world_size !=
-            tensor_model_parallel_size * pipeline_model_parallel_size):
+            tensor_model_parallel_size * pipeline_model_parallel_size * scale_factor):
         raise RuntimeError(
             f"world_size ({world_size}) is not equal to "
             f"tensor_model_parallel_size ({tensor_model_parallel_size}) x "
-            f"pipeline_model_parallel_size ({pipeline_model_parallel_size})")
+            f"pipeline_model_parallel_size ({pipeline_model_parallel_size}) * "
+            f"scale_factor ({scale_factor})")
 
     num_tensor_model_parallel_groups: int = (world_size //
                                              tensor_model_parallel_size)
@@ -82,10 +88,15 @@ def initialize_model_parallel(
             _PIPELINE_MODEL_PARALLEL_GROUP = group
             _PIPELINE_GLOBAL_RANKS = ranks
 
+    if sep_prompt_token:
+        global _STAGE_PARALLEL_GROUP
+        assert num_tensor_model_parallel_groups == 2 # always true if pipeline_model_parallel_size == 1
+        _STAGE_PARALLEL_GROUP = _TENSOR_MODEL_PARALLEL_GROUP
 
 def ensure_model_parallel_initialized(
     tensor_model_parallel_size: int,
     pipeline_model_parallel_size: int,
+    sep_prompt_token: bool = False
 ) -> None:
     """Helper to initialize model parallel groups if they are not initialized,
     or ensure tensor-parallel and pipeline-parallel sizes are equal to expected
@@ -93,7 +104,8 @@ def ensure_model_parallel_initialized(
     """
     if not model_parallel_is_initialized():
         initialize_model_parallel(tensor_model_parallel_size,
-                                  pipeline_model_parallel_size)
+                                  pipeline_model_parallel_size,
+                                  sep_prompt_token)
         return
 
     assert (
@@ -128,6 +140,12 @@ def get_pipeline_model_parallel_group():
     return _PIPELINE_MODEL_PARALLEL_GROUP
 
 
+def get_stage_parallel_group():
+    """Get the stage parallel group the caller rank belongs to."""
+    # _STAGE_PARALLEL_GROUP can be None (indicating no stage parallelism)
+    return _STAGE_PARALLEL_GROUP
+
+
 def get_tensor_model_parallel_world_size():
     """Return world size for the tensor model parallel group."""
     return torch.distributed.get_world_size(
@@ -140,6 +158,11 @@ def get_pipeline_model_parallel_world_size():
         group=get_pipeline_model_parallel_group())
 
 
+def get_stage_parallel_world_size():
+    """Return world size for the stage parallel group."""
+    return torch.distributed.get_world_size(group=get_stage_parallel_group())
+
+
 def get_tensor_model_parallel_rank():
     """Return my rank for the tensor model parallel group."""
     return torch.distributed.get_rank(group=get_tensor_model_parallel_group())
@@ -149,6 +172,11 @@ def get_pipeline_model_parallel_rank():
     """Return my rank for the pipeline model parallel group."""
     return torch.distributed.get_rank(
         group=get_pipeline_model_parallel_group())
+
+
+def get_stage_parallel_rank():
+    """Return my rank for the stage model parallel group."""
+    return torch.distributed.get_rank(group=get_stage_parallel_group())
 
 
 def get_tensor_model_parallel_src_rank():
@@ -206,3 +234,7 @@ def destroy_model_parallel():
     _PIPELINE_MODEL_PARALLEL_GROUP = None
     global _PIPELINE_GLOBAL_RANKS
     _PIPELINE_GLOBAL_RANKS = None
+    global _STAGE_PARALLEL_GROUP
+    if _STAGE_PARALLEL_GROUP:
+        torch.distributed.destroy_process_group(_STAGE_PARALLEL_GROUP)
+    _STAGE_PARALLEL_GROUP = None
