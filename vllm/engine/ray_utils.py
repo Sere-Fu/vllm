@@ -40,6 +40,9 @@ try:
         def set_cuda_visible_devices(self, device_ids) -> None:
             set_cuda_visible_devices(device_ids)
 
+        def get_model_runner_driver_rank(self) -> int:
+            return self.worker.model_runner.driver_rank
+
 except ImportError as e:
     logger.warning(f"Failed to import Ray with {e!r}. "
                    "For distributed inference, please install Ray with "

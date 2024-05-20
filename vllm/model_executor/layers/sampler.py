@@ -34,18 +34,22 @@ class Sampler(nn.Module):
         self.vocab_size = vocab_size
         # original vocabulary size (without LoRA).
         self.org_vocab_size = org_vocab_size or vocab_size
+        self.dst_rank = 0
 
     def _get_logits(self, hidden_states: torch.Tensor, embedding: torch.Tensor,
-                    embedding_bias: Optional[torch.Tensor]) -> torch.Tensor:
+                    embedding_bias: Optional[torch.Tensor], dst_rank: int = 0) -> torch.Tensor:
         # Get the logits for the next tokens.
         logits = torch.matmul(hidden_states, embedding.t())
         if embedding_bias is not None:
             logits += embedding_bias
-        logits = tensor_model_parallel_gather(logits)
+        logits = tensor_model_parallel_gather(logits, dst=dst_rank)
         # Remove paddings in vocab (if any).
         if logits is not None:
             logits = logits[:, :self.org_vocab_size]
         return logits
+
+    def set_dst_rank(self, dst_rank: int):
+        self.dst_rank = dst_rank
 
     def forward(
         self,
@@ -58,7 +62,7 @@ class Sampler(nn.Module):
         hidden_states = _prune_hidden_states(hidden_states, sampling_metadata)
 
         # Get the logits for the next tokens.
-        logits = self._get_logits(hidden_states, embedding, embedding_bias)
+        logits = self._get_logits(hidden_states, embedding, embedding_bias, dst_rank=self.dst_rank)
 
         # Only perform sampling in the driver worker.
         # Note: `_get_logits` is still distributed across TP workers because

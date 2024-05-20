@@ -14,6 +14,7 @@ from vllm.model_executor.parallel_utils.communication_op import (
     broadcast_tensor_dict)
 from vllm.model_executor.parallel_utils.custom_all_reduce import init_custom_ar
 from vllm.model_executor.parallel_utils.parallel_state import (
+    get_stage_parallel_group,
     ensure_model_parallel_initialized)
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
@@ -74,12 +75,20 @@ class Worker:
         self.cache_events = None
         self.gpu_cache = None
 
-        if self.parallel_config.spe_prompt_token:
+        if self.parallel_config.sep_prompt_token:
             self.worker_type = (WorkerType.PROMPT if self.rank <
                                     self.parallel_config.num_prompt_workers else
                                     WorkerType.TOKEN)
         else:
             self.worker_type = WorkerType.MIXED
+
+        self.model_runner.driver_rank = (
+                self.rank // self.parallel_config.num_prompt_workers
+            ) * self.parallel_config.num_prompt_workers
+
+        if self.rank == self.model_runner.driver_rank:
+                self.is_driver_worker = True
+                self.model_runner.is_driver_worker = True
 
     def is_prompt_worker(self) -> bool:
         return self.worker_type == WorkerType.PROMPT
@@ -119,6 +128,10 @@ class Worker:
 
     def load_model(self):
         self.model_runner.load_model()
+        if self.parallel_config.sep_prompt_token:
+            # Populate Sampler with dst_rank as driver worker's rank.
+            self.model_runner.model.sampler.set_dst_rank(
+                self.model_runner.driver_rank)
 
     @torch.inference_mode()
     def profile_num_available_blocks(
@@ -215,6 +228,7 @@ class Worker:
     ) -> Optional[SamplerOutput]:
         if self.is_driver_worker:
             assert seq_group_metadata_list is not None
+            is_prompt = seq_group_metadata_list[0].is_prompt
             num_seq_groups = len(seq_group_metadata_list)
             assert blocks_to_swap_in is not None
             assert blocks_to_swap_out is not None
@@ -224,14 +238,19 @@ class Worker:
                 "blocks_to_swap_in": blocks_to_swap_in,
                 "blocks_to_swap_out": blocks_to_swap_out,
                 "blocks_to_copy": blocks_to_copy,
+                "is_prompt": is_prompt,
             }
-            broadcast_tensor_dict(data, src=0)
+            # broadcast_tensor_dict(data, src=0)
+            broadcast_tensor_dict(data, src=self.model_runner.driver_rank,
+                                  group=get_stage_parallel_group())
         else:
-            data = broadcast_tensor_dict(src=0)
+            data = broadcast_tensor_dict(src=self.model_runner.driver_rank,
+                                         group=get_stage_parallel_group())
             num_seq_groups = data["num_seq_groups"]
             blocks_to_swap_in = data["blocks_to_swap_in"]
             blocks_to_swap_out = data["blocks_to_swap_out"]
             blocks_to_copy = data["blocks_to_copy"]
+            is_prompt = data['is_prompt']
 
         self.cache_swap(blocks_to_swap_in, blocks_to_swap_out, blocks_to_copy)
 
@@ -239,6 +258,7 @@ class Worker:
         if num_seq_groups == 0:
             return {}
 
+        # seq_group_metadata_list is None for non-drivers, but will be broadcasted in prepare_input_tensors
         output = self.model_runner.execute_model(seq_group_metadata_list,
                                                  self.gpu_cache)
         return output
@@ -251,6 +271,11 @@ class Worker:
 
     def list_loras(self) -> Set[int]:
         return self.model_runner.list_loras()
+
+    def should_execute(self, is_prompt: bool) -> bool:
+        return self.is_mixed_worker() or \
+            ( self.is_prompt_worker() and is_prompt) or \
+            (self.is_token_worker() and not is_prompt)
 
 
 def init_distributed_environment(
@@ -282,7 +307,7 @@ def init_distributed_environment(
     torch.distributed.all_reduce(torch.zeros(1).cuda())
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size,
-                                      parallel_config.spe_prompt_token)
+                                      parallel_config.sep_prompt_token)
 
 
 def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype):
