@@ -98,6 +98,66 @@ def tensor_model_parallel_gather(input_: torch.Tensor,
     return output_tensor
 
 
+def send(input_: torch.Tensor,
+            dst: int,
+            group: Optional[ProcessGroup] = None):
+    """Send the input tensor to the destination rank."""
+    group = group or torch.distributed.group.WORLD
+    ranks = torch.distributed.get_process_group_ranks(group)
+    assert dst in ranks, f"Invalid dst rank ({dst})"
+    # Bypass the function if we are using only 1 GPU.
+    world_size = torch.distributed.get_world_size(group=group)
+    if world_size == 1:
+        return input_
+    # Send.
+    torch.distributed.send(input_, dst=dst, group=group)
+    return input_
+
+def recv(input_: torch.Tensor,
+            src: int,
+            group: Optional[ProcessGroup] = None):
+    """Receive the input tensor from the source rank."""
+    group = group or torch.distributed.group.WORLD
+    ranks = torch.distributed.get_process_group_ranks(group)
+    assert src in ranks, f"Invalid src rank ({src})"
+    # Bypass the function if we are using only 1 GPU.
+    world_size = torch.distributed.get_world_size(group=group)
+    if world_size == 1:
+        return input_
+    # Receive.
+    torch.distributed.recv(input_, src=src, group=group)
+    return input_
+
+def isend(input_: torch.Tensor,
+            dst: int,
+            group: Optional[ProcessGroup] = None):
+    """Send the input tensor to the destination rank."""
+    group = group or torch.distributed.group.WORLD
+    ranks = torch.distributed.get_process_group_ranks(group)
+    assert dst in ranks, f"Invalid dst rank ({dst})"
+    # Bypass the function if we are using only 1 GPU.
+    world_size = torch.distributed.get_world_size(group=group)
+    if world_size == 1:
+        return input_
+    # Send.
+    return torch.distributed.isend(input_, dst=dst, group=group)
+
+def irecv(input_: torch.Tensor,
+            src: int,
+            group: Optional[ProcessGroup] = None):
+    """Receive the input tensor from the source rank."""
+    group = group or torch.distributed.group.WORLD
+    ranks = torch.distributed.get_process_group_ranks(group)
+    assert src in ranks, f"Invalid src rank ({src})"
+    # Bypass the function if we are using only 1 GPU.
+    world_size = torch.distributed.get_world_size(group=group)
+    if world_size == 1:
+        return input_
+    # Receive.
+    return torch.distributed.irecv(input_, src=src, group=group)
+
+
+
 def broadcast(input_: torch.Tensor,
               src: int = 0,
               group: Optional[ProcessGroup] = None):
