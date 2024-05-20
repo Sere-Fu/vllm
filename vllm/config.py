@@ -369,12 +369,14 @@ class ParallelConfig:
         worker_use_ray: bool,
         max_parallel_loading_workers: Optional[int] = None,
         disable_custom_all_reduce: bool = False,
+        sep_prompt_token: bool = False
     ) -> None:
         self.pipeline_parallel_size = pipeline_parallel_size
         self.tensor_parallel_size = tensor_parallel_size
         self.worker_use_ray = worker_use_ray
         self.max_parallel_loading_workers = max_parallel_loading_workers
         self.disable_custom_all_reduce = disable_custom_all_reduce
+        self.spe_prompt_token = sep_prompt_token
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size
         if self.world_size > 1:
