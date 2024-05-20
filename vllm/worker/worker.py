@@ -226,9 +226,12 @@ class Worker:
         blocks_to_swap_out: Optional[Dict[int, int]] = None,
         blocks_to_copy: Optional[Dict[int, List[int]]] = None,
     ) -> Optional[SamplerOutput]:
+        is_prompt = False
         if self.is_driver_worker:
             assert seq_group_metadata_list is not None
             is_prompt = seq_group_metadata_list[0].is_prompt
+        if self.is_driver_worker and self.should_execute(is_prompt):
+            assert seq_group_metadata_list is not None
             num_seq_groups = len(seq_group_metadata_list)
             assert blocks_to_swap_in is not None
             assert blocks_to_swap_out is not None
