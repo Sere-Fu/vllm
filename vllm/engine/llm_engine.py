@@ -210,6 +210,23 @@ class LLMEngine:
         worker_node_and_gpu_ids = ray.get(
             [worker.get_node_and_gpu_ids.remote() for worker in self.workers])
 
+
+        driver_node_workers = []
+        other_node_workers = []
+        driver_worker_node_and_gpu_ids = []
+        other_worker_node_and_gpu_ids = []
+
+        for worker, (node_id, gpu_ids) in zip(self.workers,
+                                              worker_node_and_gpu_ids):
+            if node_id == driver_node_id:
+                driver_node_workers.append(worker)
+                driver_worker_node_and_gpu_ids.append((node_id, gpu_ids))
+            else:
+                other_node_workers.append(worker)
+                other_worker_node_and_gpu_ids.append((node_id, gpu_ids))
+        self.workers = driver_node_workers + other_node_workers
+        worker_node_and_gpu_ids = driver_worker_node_and_gpu_ids + other_worker_node_and_gpu_ids
+
         node_workers = defaultdict(list)
         node_gpus = defaultdict(list)
 
