@@ -1,6 +1,7 @@
 """A GPU worker class."""
 import gc
 import os
+import enum
 from typing import Dict, List, Tuple, Set, Optional
 
 import torch
@@ -18,6 +19,11 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
+
+class WorkerType(enum.Enum):
+    PROMPT = enum.auto()
+    TOKEN = enum.auto()
+    MIXED = enum.auto()
 
 
 class Worker:
@@ -49,6 +55,7 @@ class Worker:
         self.rank = rank
         self.distributed_init_method = distributed_init_method
         self.lora_config = lora_config
+
         self.is_driver_worker = is_driver_worker
         if self.is_driver_worker:
             assert self.rank == 0, "The driver worker must have rank 0."
@@ -66,6 +73,22 @@ class Worker:
         self.cache_engine = None
         self.cache_events = None
         self.gpu_cache = None
+
+        if self.parallel_config.spe_prompt_token:
+            self.worker_type = (WorkerType.PROMPT if self.rank <
+                                    self.parallel_config.num_prompt_workers else
+                                    WorkerType.TOKEN)
+        else:
+            self.worker_type = WorkerType.MIXED
+
+    def is_prompt_worker(self) -> bool:
+        return self.worker_type == WorkerType.PROMPT
+
+    def is_token_worker(self) -> bool:
+        return self.worker_type == WorkerType.TOKEN
+
+    def is_mixed_worker(self) -> bool:
+        return self.worker_type == WorkerType.MIXED
 
     def init_model(self) -> None:
         if self.device_config.device.type == "cuda":
