@@ -3,6 +3,7 @@ import gc
 import os
 import enum
 from typing import Dict, List, Tuple, Set, Optional
+import time
 
 import torch
 import torch.distributed
@@ -11,10 +12,10 @@ from vllm.config import (CacheConfig, DeviceConfig, ModelConfig,
                          ParallelConfig, SchedulerConfig, LoRAConfig)
 from vllm.model_executor import set_random_seed
 from vllm.model_executor.parallel_utils.communication_op import (
-    broadcast_tensor_dict)
+    broadcast_tensor_dict, broadcast)
 from vllm.model_executor.parallel_utils.custom_all_reduce import init_custom_ar
 from vllm.model_executor.parallel_utils.parallel_state import (
-    get_stage_parallel_group,
+    get_stage_parallel_group, get_kv_transfer_parallel_group,
     ensure_model_parallel_initialized)
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
@@ -79,16 +80,17 @@ class Worker:
             self.worker_type = (WorkerType.PROMPT if self.rank <
                                     self.parallel_config.num_prompt_workers else
                                     WorkerType.TOKEN)
+
+            self.model_runner.driver_rank = (
+                    self.rank // self.parallel_config.num_prompt_workers
+                ) * self.parallel_config.num_prompt_workers
+
+            if self.rank == self.model_runner.driver_rank:
+                    self.is_driver_worker = True
+                    self.model_runner.is_driver_worker = True
         else:
             self.worker_type = WorkerType.MIXED
 
-        self.model_runner.driver_rank = (
-                self.rank // self.parallel_config.num_prompt_workers
-            ) * self.parallel_config.num_prompt_workers
-
-        if self.rank == self.model_runner.driver_rank:
-                self.is_driver_worker = True
-                self.model_runner.is_driver_worker = True
 
     def is_prompt_worker(self) -> bool:
         return self.worker_type == WorkerType.PROMPT
@@ -266,6 +268,21 @@ class Worker:
                                                  self.gpu_cache)
         return output
 
+    def transfer_kv_cache( self):
+        # todo: pass precise blocks here
+        if get_kv_transfer_parallel_group() is not None:
+            handlers = []
+            for key_cache, value_cache in self.cache_engine.gpu_cache:
+                handlers.append(torch.distributed.broadcast(key_cache,
+                                            src=0, group=get_kv_transfer_parallel_group(),
+                                            async_op=True))
+                handlers.append(torch.distributed.broadcast(value_cache,
+                                            src=0, group=get_kv_transfer_parallel_group(),
+                                            async_op=True))
+            for handler in handlers:
+                handler.wait()
+
+
     def add_lora(self, lora_request: LoRARequest) -> bool:
         return self.model_runner.add_lora(lora_request)
 
@@ -308,6 +325,7 @@ def init_distributed_environment(
 
     # A small all_reduce for warmup.
     torch.distributed.all_reduce(torch.zeros(1).cuda())
+    torch.distributed.broadcast(torch.zeros(1).cuda(), src=0)
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size,
                                       parallel_config.sep_prompt_token)

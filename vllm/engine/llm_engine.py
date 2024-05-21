@@ -842,6 +842,9 @@ class LLMEngine:
                 })
             output = all_outputs[0]
 
+            if seq_group_metadata_list[0].is_prompt:
+                self._run_workers( "transfer_kv_cache")
+
         return self._process_model_outputs(output, scheduler_outputs)
 
     def do_log_stats(self) -> None:
