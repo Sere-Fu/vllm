@@ -268,19 +268,20 @@ class Worker:
                                                  self.gpu_cache)
         return output
 
-    def transfer_kv_cache( self):
-        # todo: pass precise blocks here
+    def transfer_kv_cache(self, blocks_to_nw):
         handlers = []
         if self.is_prompt_worker():
-            for key_cache, value_cache in self.cache_engine.gpu_cache:
-                handlers.append(torch.distributed.isend(key_cache, dst=self.rank + 2))
-                handlers.append(torch.distributed.isend(value_cache, dst=self.rank + 2))
+            for i in blocks_to_nw:
+                for key_cache, value_cache in self.cache_engine.gpu_cache:
+                    handlers.append(torch.distributed.isend(key_cache[i], dst=self.rank + 2))
+                    handlers.append(torch.distributed.isend(value_cache[i], dst=self.rank + 2))
             for handler in handlers:
                 handler.wait()
         if self.is_token_worker():
-            for key_cache, value_cache in self.cache_engine.gpu_cache:
-                handlers.append(torch.distributed.irecv(key_cache, src=self.rank - 2))
-                handlers.append(torch.distributed.irecv(value_cache, src=self.rank - 2))
+            for i in blocks_to_nw:
+                for key_cache, value_cache in self.cache_engine.gpu_cache:
+                    handlers.append(torch.distributed.irecv(key_cache[i], src=self.rank - 2))
+                    handlers.append(torch.distributed.irecv(value_cache[i], src=self.rank - 2))
             for handler in handlers:
                 handler.wait()
 

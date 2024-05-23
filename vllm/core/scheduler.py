@@ -38,6 +38,7 @@ class SchedulerOutputs:
         blocks_to_swap_in: Dict[int, int],
         blocks_to_swap_out: Dict[int, int],
         blocks_to_copy: Dict[int, List[int]],
+        blocks_to_nw: list[int],
         ignored_seq_groups: List[SequenceGroup],
     ) -> None:
         self.scheduled_seq_groups = scheduled_seq_groups
@@ -46,6 +47,7 @@ class SchedulerOutputs:
         self.blocks_to_swap_in = blocks_to_swap_in
         self.blocks_to_swap_out = blocks_to_swap_out
         self.blocks_to_copy = blocks_to_copy
+        self.blocks_to_nw = blocks_to_nw
         # Swap in and swap out should never happen at the same time.
         assert not (blocks_to_swap_in and blocks_to_swap_out)
         self.ignored_seq_groups = ignored_seq_groups
@@ -77,6 +79,7 @@ class Scheduler:
         scheduler_config: SchedulerConfig,
         cache_config: CacheConfig,
         lora_config: Optional[LoRAConfig],
+        track_prompt_blocks: bool = False
     ) -> None:
         self.scheduler_config = scheduler_config
         self.cache_config = cache_config
@@ -84,6 +87,7 @@ class Scheduler:
         # simple and NOT fair. It can lead to starvation of some
         # LoRAs. This should be improved in the future.
         self.lora_config = lora_config
+        self.track_prompt_blocks = track_prompt_blocks
 
         self.prompt_limit = min(self.scheduler_config.max_model_len,
                                 self.scheduler_config.max_num_batched_tokens)
@@ -162,6 +166,7 @@ class Scheduler:
         blocks_to_swap_in: Dict[int, int] = {}
         blocks_to_swap_out: Dict[int, int] = {}
         blocks_to_copy: Dict[int, List[int]] = {}
+        blocks_to_nw: List[int] = []
 
         # Fix the current time.
         now = time.monotonic()
@@ -256,6 +261,14 @@ class Scheduler:
                     assert seq.get_output_len() <= 1
                     assert self.block_manager.get_block_table(seq) is not None
 
+                if self.track_prompt_blocks:
+                    for seq in seq_group.get_seqs():
+                        # Populate blocks_to_nw for the sequences in prompt phase
+                        # and first step of generation phase
+                        if seq.get_output_len() <= 1:
+                            block_ids = self.block_manager.get_block_table(seq)
+                            blocks_to_nw.extend(block_ids)
+
             self.waiting.extendleft(leftover_waiting_sequences)
 
             if scheduled or ignored_seq_groups:
@@ -267,6 +280,7 @@ class Scheduler:
                     blocks_to_swap_in=blocks_to_swap_in,
                     blocks_to_swap_out=blocks_to_swap_out,
                     blocks_to_copy=blocks_to_copy,
+                    blocks_to_nw=blocks_to_nw,
                     ignored_seq_groups=ignored_seq_groups,
                 )
                 return scheduler_outputs
@@ -359,6 +373,7 @@ class Scheduler:
             blocks_to_swap_in=blocks_to_swap_in,
             blocks_to_swap_out=blocks_to_swap_out,
             blocks_to_copy=blocks_to_copy,
+            blocks_to_nw=blocks_to_nw,
             ignored_seq_groups=[],
         )
         return scheduler_outputs

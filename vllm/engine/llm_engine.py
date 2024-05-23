@@ -117,7 +117,8 @@ class LLMEngine:
         self._init_cache()
 
         # Create the scheduler.
-        self.scheduler = Scheduler(scheduler_config, cache_config, lora_config)
+        self.scheduler = Scheduler(scheduler_config, cache_config, lora_config,
+                                   track_prompt_blocks=self.parallel_config.sep_prompt_token)
 
         # Metric Logging.
         if self.log_stats:
@@ -843,7 +844,7 @@ class LLMEngine:
             output = all_outputs[0]
 
             if seq_group_metadata_list[0].is_prompt:
-                self._run_workers( "transfer_kv_cache")
+                self._run_workers( "transfer_kv_cache", scheduler_outputs.blocks_to_nw)
 
         return self._process_model_outputs(output, scheduler_outputs)
 
