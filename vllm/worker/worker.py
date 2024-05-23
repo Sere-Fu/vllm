@@ -270,15 +270,17 @@ class Worker:
 
     def transfer_kv_cache( self):
         # todo: pass precise blocks here
-        if get_kv_transfer_parallel_group() is not None:
-            handlers = []
+        handlers = []
+        if self.is_prompt_worker():
             for key_cache, value_cache in self.cache_engine.gpu_cache:
-                handlers.append(torch.distributed.broadcast(key_cache,
-                                            src=0, group=get_kv_transfer_parallel_group(),
-                                            async_op=True))
-                handlers.append(torch.distributed.broadcast(value_cache,
-                                            src=0, group=get_kv_transfer_parallel_group(),
-                                            async_op=True))
+                handlers.append(torch.distributed.isend(key_cache, dst=self.rank + 2))
+                handlers.append(torch.distributed.isend(value_cache, dst=self.rank + 2))
+            for handler in handlers:
+                handler.wait()
+        if self.is_token_worker():
+            for key_cache, value_cache in self.cache_engine.gpu_cache:
+                handlers.append(torch.distributed.irecv(key_cache, src=self.rank - 2))
+                handlers.append(torch.distributed.irecv(value_cache, src=self.rank - 2))
             for handler in handlers:
                 handler.wait()
 

@@ -252,6 +252,9 @@ class Scheduler:
                 self.running.append(seq_group)
                 num_curr_seqs += num_new_seqs
                 scheduled.append(seq_group)
+                for seq in seq_group.get_seqs():
+                    assert seq.get_output_len() <= 1
+                    assert self.block_manager.get_block_table(seq) is not None
 
             self.waiting.extendleft(leftover_waiting_sequences)
 
