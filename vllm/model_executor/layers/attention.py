@@ -2,6 +2,7 @@
 from typing import List, Optional
 
 import torch
+import torch.distributed
 import torch.nn as nn
 from xformers import ops as xops
 from xformers.ops.fmha.attn_bias import (BlockDiagonalCausalMask,
@@ -13,6 +14,7 @@ from vllm.model_executor.input_metadata import InputMetadata
 from vllm.model_executor.layers.triton_kernel.prefix_prefill import (
     context_attention_fwd)
 from vllm.utils import is_hip
+from vllm.model_executor.parallel_utils.parallel_state import get_tensor_model_parallel_world_size
 
 _SUPPORTED_HEAD_SIZES = [64, 80, 96, 112, 128, 256]
 # Should be the same as PARTITION_SIZE in `paged_attention_v2_launcher`.
@@ -100,6 +102,13 @@ class PagedAttention(nn.Module):
                 input_metadata.slot_mapping.flatten(),
                 input_metadata.kv_cache_dtype,
             )
+
+        tp_size = get_tensor_model_parallel_world_size()
+        rank = torch.distributed.get_rank()
+        if input_metadata.is_prompt and input_metadata.blocks_to_nw:
+            for i in input_metadata.blocks_to_nw:
+                torch.distributed.isend(key_cache[i], rank + tp_size)
+                torch.distributed.isend(value_cache[i], rank + tp_size)
 
         if input_metadata.is_prompt:
             # Prompt run.

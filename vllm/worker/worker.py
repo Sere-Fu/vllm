@@ -227,6 +227,7 @@ class Worker:
         blocks_to_swap_in: Optional[Dict[int, int]] = None,
         blocks_to_swap_out: Optional[Dict[int, int]] = None,
         blocks_to_copy: Optional[Dict[int, List[int]]] = None,
+        blocks_to_nw: Optional[List[int]] = None,
     ) -> Optional[SamplerOutput]:
         is_prompt = False
         if self.is_driver_worker:
@@ -238,11 +239,13 @@ class Worker:
             assert blocks_to_swap_in is not None
             assert blocks_to_swap_out is not None
             assert blocks_to_copy is not None
+            assert blocks_to_nw is not None
             data = {
                 "num_seq_groups": num_seq_groups,
                 "blocks_to_swap_in": blocks_to_swap_in,
                 "blocks_to_swap_out": blocks_to_swap_out,
                 "blocks_to_copy": blocks_to_copy,
+                "blocks_to_nw": blocks_to_nw,
                 "is_prompt": is_prompt,
             }
             # broadcast_tensor_dict(data, src=0)
@@ -255,6 +258,7 @@ class Worker:
             blocks_to_swap_in = data["blocks_to_swap_in"]
             blocks_to_swap_out = data["blocks_to_swap_out"]
             blocks_to_copy = data["blocks_to_copy"]
+            blocks_to_nw = data["blocks_to_nw"]
             is_prompt = data['is_prompt']
 
         self.cache_swap(blocks_to_swap_in, blocks_to_swap_out, blocks_to_copy)
@@ -265,27 +269,38 @@ class Worker:
 
         # seq_group_metadata_list is None for non-drivers, but will be broadcasted in prepare_input_tensors
         output = self.model_runner.execute_model(seq_group_metadata_list,
-                                                 self.gpu_cache)
+                                                 self.gpu_cache,
+                                                 blocks_to_nw)
         return output
 
     def transfer_kv_cache(self, blocks_to_nw):
         handlers = []
-        world_size = get_tensor_model_parallel_world_size()
+        tp_size = get_tensor_model_parallel_world_size()
         if self.is_prompt_worker():
             for i in blocks_to_nw:
                 for key_cache, value_cache in self.cache_engine.gpu_cache:
-                    handlers.append(torch.distributed.isend(key_cache[i], dst=self.rank + world_size))
-                    handlers.append(torch.distributed.isend(value_cache[i], dst=self.rank + world_size))
+                    handlers.append(torch.distributed.isend(key_cache[i], dst=self.rank + tp_size))
+                    handlers.append(torch.distributed.isend(value_cache[i], dst=self.rank + tp_size))
             for handler in handlers:
                 handler.wait()
         if self.is_token_worker():
             for i in blocks_to_nw:
                 for key_cache, value_cache in self.cache_engine.gpu_cache:
-                    handlers.append(torch.distributed.irecv(key_cache[i], src=self.rank - world_size))
-                    handlers.append(torch.distributed.irecv(value_cache[i], src=self.rank - world_size))
+                    handlers.append(torch.distributed.irecv(key_cache[i], src=self.rank - tp_size))
+                    handlers.append(torch.distributed.irecv(value_cache[i], src=self.rank - tp_size))
             for handler in handlers:
                 handler.wait()
 
+    def receive_kv_cache(self, blocks_to_nw):
+        tp_size = get_tensor_model_parallel_world_size()
+        assert self.is_token_worker
+        for key_cache, value_cache in self.cache_engine.gpu_cache:
+            handlers = []
+            for i in blocks_to_nw:
+                handlers.append(torch.distributed.irecv(key_cache[i], src=self.rank - tp_size))
+                handlers.append(torch.distributed.irecv(value_cache[i], src=self.rank - tp_size))
+            for handler in handlers:
+                handler.wait()
 
     def add_lora(self, lora_request: LoRARequest) -> bool:
         return self.model_runner.add_lora(lora_request)
@@ -330,6 +345,13 @@ def init_distributed_environment(
     # A small all_reduce for warmup.
     torch.distributed.all_reduce(torch.zeros(1).cuda())
     torch.distributed.broadcast(torch.zeros(1).cuda(), src=0)
+    if parallel_config.sep_prompt_token:
+        if rank < parallel_config.num_prompt_workers:
+            req = torch.distributed.isend(torch.zeros(1).cuda(), rank + parallel_config.num_prompt_workers)
+            req.wait()
+        else:
+            req = torch.distributed.irecv(torch.zeros(1).cuda(), rank - parallel_config.num_prompt_workers)
+            req.wait()
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size,
                                       parallel_config.sep_prompt_token)

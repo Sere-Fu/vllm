@@ -448,6 +448,7 @@ class ModelRunner:
     def prepare_input_tensors(
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
+        blocks_to_nw: Optional[List[int]]
     ) -> Tuple[torch.Tensor, torch.Tensor, InputMetadata, SamplingMetadata,
                Set[int], LoRAMapping]:
         stage_group = get_stage_parallel_group()
@@ -528,6 +529,7 @@ class ModelRunner:
                 perform_sampling=False,
             )
 
+        input_metadata.blocks_to_nw = blocks_to_nw
         return (input_tokens, input_positions, input_metadata,
                 sampling_metadata, lora_requests, lora_mapping)
 
@@ -536,10 +538,11 @@ class ModelRunner:
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
+        blocks_to_nw: List[int] = []
     ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
          lora_requests,
-         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list)
+         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, blocks_to_nw)
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)

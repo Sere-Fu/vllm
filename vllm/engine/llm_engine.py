@@ -826,6 +826,7 @@ class LLMEngine:
                     "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
                     "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
                     "blocks_to_copy": scheduler_outputs.blocks_to_copy,
+                    "blocks_to_nw": [],
                 })
 
             # Only the driver worker returns the sampling results.
@@ -840,11 +841,12 @@ class LLMEngine:
                     "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
                     "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
                     "blocks_to_copy": scheduler_outputs.blocks_to_copy,
+                    "blocks_to_nw": scheduler_outputs.blocks_to_nw,
                 })
             output = all_outputs[0]
 
-            if seq_group_metadata_list[0].is_prompt:
-                self._run_workers( "transfer_kv_cache", scheduler_outputs.blocks_to_nw)
+            # if seq_group_metadata_list[0].is_prompt:
+            #     self._run_workers( "transfer_kv_cache", scheduler_outputs.blocks_to_nw)
 
         return self._process_model_outputs(output, scheduler_outputs)
 
@@ -1056,13 +1058,20 @@ class LLMEngine:
                 worker.execute_method.remote(method, *args, **kwargs)
                 for worker in
                 self.workers[:self.parallel_config.num_prompt_workers - 1]
-            ]
+                ]
+
+            other_worker_outputs = [
+                worker.execute_method.remote("receive_kv_cache", driver_kwargs['blocks_to_nw'])
+                for worker in
+                self.workers[self.parallel_config.num_prompt_workers-1:]
+                ]
+
+            ray_worker_outputs.extend(other_worker_outputs)
 
             # Start the driver worker after all the ray workers.
             driver_worker_output = getattr(self.driver_worker,
                                            method)(*driver_args,
                                                    **driver_kwargs)
-
         else:
             # Token workers use worker[num_prompt_workers-1] as driver worker.
             # Start the ray workers first.
