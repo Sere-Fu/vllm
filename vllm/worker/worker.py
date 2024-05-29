@@ -15,7 +15,7 @@ from vllm.model_executor.parallel_utils.communication_op import (
     broadcast_tensor_dict, broadcast)
 from vllm.model_executor.parallel_utils.custom_all_reduce import init_custom_ar
 from vllm.model_executor.parallel_utils.parallel_state import (
-    get_stage_parallel_group, get_kv_transfer_parallel_group,
+    get_stage_parallel_group, get_tensor_model_parallel_world_size,
     ensure_model_parallel_initialized)
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
@@ -270,18 +270,19 @@ class Worker:
 
     def transfer_kv_cache(self, blocks_to_nw):
         handlers = []
+        world_size = get_tensor_model_parallel_world_size()
         if self.is_prompt_worker():
             for i in blocks_to_nw:
                 for key_cache, value_cache in self.cache_engine.gpu_cache:
-                    handlers.append(torch.distributed.isend(key_cache[i], dst=self.rank + 2))
-                    handlers.append(torch.distributed.isend(value_cache[i], dst=self.rank + 2))
+                    handlers.append(torch.distributed.isend(key_cache[i], dst=self.rank + world_size))
+                    handlers.append(torch.distributed.isend(value_cache[i], dst=self.rank + world_size))
             for handler in handlers:
                 handler.wait()
         if self.is_token_worker():
             for i in blocks_to_nw:
                 for key_cache, value_cache in self.cache_engine.gpu_cache:
-                    handlers.append(torch.distributed.irecv(key_cache[i], src=self.rank - 2))
-                    handlers.append(torch.distributed.irecv(value_cache[i], src=self.rank - 2))
+                    handlers.append(torch.distributed.irecv(key_cache[i], src=self.rank - world_size))
+                    handlers.append(torch.distributed.irecv(value_cache[i], src=self.rank - world_size))
             for handler in handlers:
                 handler.wait()
 

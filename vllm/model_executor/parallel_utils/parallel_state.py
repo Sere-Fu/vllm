@@ -13,8 +13,6 @@ _PIPELINE_MODEL_PARALLEL_GROUP = None
 # Stage parallel group that the current rank belongs to.
 _STAGE_PARALLEL_GROUP = None
 
-_KV_TRANSFER_PARALLEL_GROUP = None
-
 # A list of global ranks for each pipeline group to ease calculation of the
 # source rank when broadcasting from the first or last pipeline stage.
 _PIPELINE_GLOBAL_RANKS = None
@@ -93,16 +91,19 @@ def initialize_model_parallel(
 
     if sep_prompt_token:
         global _STAGE_PARALLEL_GROUP
-        assert num_tensor_model_parallel_groups == 2 # always true if pipeline_model_parallel_size == 1
-        _STAGE_PARALLEL_GROUP = _TENSOR_MODEL_PARALLEL_GROUP
+        # assert num_tensor_model_parallel_groups == 2 # always true if pipeline_model_parallel_size == 1
+        # _STAGE_PARALLEL_GROUP = _TENSOR_MODEL_PARALLEL_GROUP
 
-
-    if sep_prompt_token:
-        global _KV_TRANSFER_PARALLEL_GROUP
-        ranks = [0, 2, 3]
-        group = torch.distributed.new_group(ranks)
-        if rank in ranks:
-            _KV_TRANSFER_PARALLEL_GROUP = group
+        if num_tensor_model_parallel_groups == 2:
+            _STAGE_PARALLEL_GROUP = _TENSOR_MODEL_PARALLEL_GROUP
+        else:
+            prompt_group = torch.distributed.new_group(range(world_size // 2))
+            token_group = torch.distributed.new_group(
+                range(world_size // 2, world_size))
+            if rank < world_size // 2:
+                _STAGE_PARALLEL_GROUP = prompt_group
+            else:
+                _STAGE_PARALLEL_GROUP = token_group
 
 
 def ensure_model_parallel_initialized(
@@ -156,9 +157,6 @@ def get_stage_parallel_group():
     """Get the stage parallel group the caller rank belongs to."""
     # _STAGE_PARALLEL_GROUP can be None (indicating no stage parallelism)
     return _STAGE_PARALLEL_GROUP
-
-def get_kv_transfer_parallel_group():
-    return _KV_TRANSFER_PARALLEL_GROUP
 
 
 def get_tensor_model_parallel_world_size():
