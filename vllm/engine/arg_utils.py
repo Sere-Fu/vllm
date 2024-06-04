@@ -11,6 +11,7 @@ from vllm.config import (CacheConfig, DeviceConfig, ModelConfig,
 class EngineArgs:
     """Arguments for vLLM engine."""
     model: str
+    engine_type: Optional[str] = 'mixed'
     tokenizer: Optional[str] = None
     tokenizer_mode: str = 'auto'
     trust_remote_code: bool = False
@@ -63,6 +64,11 @@ class EngineArgs:
             type=str,
             default='facebook/opt-125m',
             help='name or path of the huggingface model to use')
+        parser.add_argument(
+            '--engine-type',
+            type=str,
+            default=EngineArgs.engine_type,
+            help='engine type')
         parser.add_argument(
             '--tokenizer',
             type=str,

@@ -115,6 +115,10 @@ class Scheduler:
         # Add sequence groups to the waiting queue.
         self.waiting.append(seq_group)
 
+    def add_decoding_seq_group(self, seq_group: SequenceGroup) -> None:
+        # Add sequence groups to the running queue.
+        self.running.append(seq_group)
+
     def abort_seq_group(self, request_id: Union[str, Iterable[str]]) -> None:
         """Aborts a sequence group with the given ID.
 

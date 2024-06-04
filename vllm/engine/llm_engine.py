@@ -1,3 +1,4 @@
+import enum
 import copy
 from collections import defaultdict
 import os
@@ -29,6 +30,11 @@ if TYPE_CHECKING:
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
+
+class EngineType(enum.Enum):
+    PREFILL = enum.auto()
+    DECODING = enum.auto()
+    MIXED = enum.auto()
 
 
 class LLMEngine:
@@ -69,6 +75,7 @@ class LLMEngine:
         lora_config: Optional[LoRAConfig],
         placement_group: Optional["PlacementGroup"],
         log_stats: bool,
+        engine_type: str,
     ) -> None:
         logger.info(
             "Initializing an LLM engine with config: "
@@ -98,6 +105,16 @@ class LLMEngine:
         self.scheduler_config = scheduler_config
         self.device_config = device_config
         self.log_stats = log_stats
+
+        if engine_type == "prefill":
+            self.engine_type = EngineType.PREFILL
+        elif engine_type == "decoding":
+            self.engine_type = EngineType.DECODING
+        elif engine_type == "mixed":
+            self.engine_type = EngineType.MIXED
+        else:
+            raise ValueError(f"Invalid engine_type: {engine_type}")
+
         self._verify_args()
 
         self._init_tokenizer()
@@ -360,6 +377,7 @@ class LLMEngine:
         # Create the LLM engine.
         engine = cls(*engine_configs,
                      placement_group,
+                     engine_type=engine_args.engine_type,
                      log_stats=not engine_args.disable_log_stats)
         return engine
 
@@ -460,6 +478,12 @@ class LLMEngine:
 
         # Add the sequence group to the scheduler.
         self.scheduler.add_seq_group(seq_group)
+
+    def add_decoding_requests(self, seq_group: SequenceGroup):
+        if self.engine_type != EngineType.DECODING:
+            raise ValueError(
+                "add_decoding_requests is only supported for EngineType.TOKEN")
+        self.scheduler.add_decoding_seq_group(seq_group)
 
     def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:
         """Aborts a request(s) with the given ID.

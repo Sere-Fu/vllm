@@ -8,6 +8,7 @@ from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.llm_engine import LLMEngine
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
+from vllm.sequence import SequenceGroup
 from vllm.utils import Counter
 
 
@@ -196,6 +197,12 @@ class LLM:
                                     prompt_token_ids,
                                     lora_request=lora_request,
                                     prefix_pos=prefix_pos)
+
+    def _add_decoding_request(
+        self,
+        seq_group: SequenceGroup,
+    ) -> None:
+        self.llm_engine.add_decoding_requests(seq_group)
 
     def _run_engine(self, use_tqdm: bool) -> List[RequestOutput]:
         # Initialize tqdm.
