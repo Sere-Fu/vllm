@@ -3,6 +3,8 @@ import os
 import socket
 import subprocess
 import uuid
+import pickle
+import base64
 from platform import uname
 from typing import List, Tuple, Union
 from packaging.version import parse, Version
@@ -276,3 +278,9 @@ def create_kv_caches_with_random(
             _generate_random_fp8_e5m2(value_cache, -scale, scale)
         value_caches.append(value_cache)
     return key_caches, value_caches
+
+def marshalToB64String(obj: Any) -> str:
+    return base64.b64encode(pickle.dumps(obj)).decode("utf-8")
+
+def unmarshalFromB64String(s: str) -> Any:
+    return pickle.loads(base64.b64decode(s.encode("utf-8")))
