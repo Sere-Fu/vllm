@@ -7,11 +7,12 @@ from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
 from vllm.lora.request import LoRARequest
 from vllm.config import ModelConfig
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.engine.llm_engine import LLMEngine
+from vllm.engine.llm_engine import LLMEngine, EngineType
 from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
+from vllm.sequence import SequenceGroup
 
 logger = init_logger(__name__)
 
@@ -127,6 +128,20 @@ class RequestTracker:
 
         return stream
 
+    def add_decoding_request(self, seq_group: SequenceGroup) -> AsyncStream:
+        """Add a request to be sent to the engine on the next background
+        loop iteration."""
+        request_id = seq_group.request_id
+        if  request_id in self._request_streams:
+            raise KeyError(f"Request {request_id} already exists.")
+
+        stream = AsyncStream(request_id)
+        self._new_requests.put_nowait((stream, seq_group))
+
+        self.new_requests_event.set()
+
+        return stream
+
     def abort_request(self, request_id: str, *, verbose: bool = False) -> None:
         """Abort a request during next background loop iteration."""
         if verbose:
@@ -161,7 +176,7 @@ class RequestTracker:
             self._request_streams[stream.request_id] = stream
             new_requests.append(new_request)
 
-        self.new_requests_event.clear()
+        self.new_requests_event.clear() # drain all requests at once
 
         return new_requests, finished_requests
 
@@ -247,6 +262,16 @@ class _AsyncLLMEngine(LLMEngine):
             lora_request=lora_request,
             prefix_pos=prefix_pos,
         )
+
+    async def add_decoding_request_async(
+        self,
+        seq_group: SequenceGroup
+    ) -> None:
+        if seq_group.lora_request is not None and not self.lora_config:
+            raise ValueError(f"Got lora_request {seq_group.lora_request} but LoRA is "
+                             "not enabled!")
+
+        return self.add_decoding_request(seq_group)
 
     async def _run_workers_async(
         self,
@@ -379,7 +404,10 @@ class AsyncLLMEngine:
             if self.engine_use_ray:
                 await self.engine.add_request.remote(**new_request)
             else:
-                await self.engine.add_request_async(**new_request)
+                if self.engine.engine_type == EngineType.MIXED:
+                    await self.engine.add_request_async(**new_request)
+                elif self.engine.engine_type == EngineType.DECODING:
+                    await self.engine.add_decoding_request_async(new_request)
 
         if finished_requests:
             await self._engine_abort(finished_requests)
@@ -471,6 +499,25 @@ class AsyncLLMEngine:
             arrival_time=arrival_time,
             lora_request=lora_request,
             prefix_pos=prefix_pos)
+
+        return stream
+
+    async def add_decoding_request( self, seq_group: SequenceGroup) -> AsyncStream:
+        if self.log_requests:
+            logger.info(f"Received request {seq_group.request_id}: "
+                        f"seq_group: {seq_group}.")
+
+        if not self.is_running:
+            if self.start_engine_loop:
+                self.start_background_loop()
+            else:
+                raise AsyncEngineDeadError(
+                    "Background loop is not running. If it was running, "
+                    "inspect the output to find the stacktrace of the "
+                    "error that caused the background loop to stop "
+                    "(AsyncEngineDeadError).")
+
+        stream = self._request_tracker.add_decoding_request(seq_group=seq_group)
 
         return stream
 
@@ -571,6 +618,21 @@ class AsyncLLMEngine:
             # If there is an exception or coroutine is cancelled, abort the
             # request.
             self._abort(request_id)
+            raise e
+
+    async def decode(
+        self,
+        seq_group: SequenceGroup,
+    ) -> AsyncIterator[RequestOutput]:
+        try:
+            stream = await self.add_decoding_request(seq_group)
+
+            async for request_output in stream:
+                yield request_output
+        except (Exception, asyncio.CancelledError) as e:
+            # If there is an exception or coroutine is cancelled, abort the
+            # request.
+            self._abort(seq_group.request_id)
             raise e
 
     async def abort(self, request_id: str) -> None:

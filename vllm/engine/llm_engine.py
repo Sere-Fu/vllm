@@ -479,10 +479,10 @@ class LLMEngine:
         # Add the sequence group to the scheduler.
         self.scheduler.add_seq_group(seq_group)
 
-    def add_decoding_requests(self, seq_group: SequenceGroup):
+    def add_decoding_request(self, seq_group: SequenceGroup):
         if self.engine_type != EngineType.DECODING:
             raise ValueError(
-                "add_decoding_requests is only supported for EngineType.TOKEN")
+                "add_decoding_requests is only supported for EngineType.DECODING")
         self.scheduler.add_decoding_seq_group(seq_group)
 
     def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:

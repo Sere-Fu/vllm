@@ -9,7 +9,7 @@ import uvicorn
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
-from vllm.utils import random_uuid
+from vllm.utils import random_uuid, unmarshalFromB64String
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
@@ -71,6 +71,26 @@ async def generate(request: Request) -> Response:
     ret = {"text": text_outputs}
     return JSONResponse(ret)
 
+@app.post("/decode")
+async def decode(request: Request) -> Response:
+    request_dict = await request.json()
+    seq_group = unmarshalFromB64String(request_dict.pop("sg"))
+
+    results_generator = engine.decode(seq_group=seq_group)
+
+    final_output = None
+    async for request_output in results_generator:
+        if await request.is_disconnected():
+            # Abort the request if the client disconnects.
+            await engine.abort(seq_group.request_id)
+            return Response(status_code=499)
+        final_output = request_output
+
+    assert final_output is not None
+    prompt = final_output.prompt
+    text_outputs = [prompt + output.text for output in final_output.outputs]
+    ret = {"text": text_outputs}
+    return JSONResponse(ret)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
