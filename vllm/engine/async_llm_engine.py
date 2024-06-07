@@ -406,6 +406,8 @@ class AsyncLLMEngine:
             else:
                 if self.engine.engine_type == EngineType.MIXED:
                     await self.engine.add_request_async(**new_request)
+                elif self.engine.engine_type == EngineType.PREFILL:
+                    await self.engine.add_request_async(**new_request)
                 elif self.engine.engine_type == EngineType.DECODING:
                     await self.engine.add_decoding_request_async(new_request)
 
@@ -421,6 +423,12 @@ class AsyncLLMEngine:
         for request_output in request_outputs:
             self._request_tracker.process_request_output(
                 request_output, verbose=self.log_requests)
+
+        if self.engine.engine_type == EngineType.PREFILL:
+            # prefilled_requests = set()
+            for request_output in request_outputs:
+                # prefilled_requests.add(request_output.request_id)
+                await self.abort(request_output.request_id)
 
         return len(request_outputs) > 0
 
