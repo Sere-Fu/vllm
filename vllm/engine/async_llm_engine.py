@@ -7,7 +7,7 @@ from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
 from vllm.lora.request import LoRARequest
 from vllm.config import ModelConfig
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.engine.llm_engine import LLMEngine, EngineType
+from vllm.engine.llm_engine import LLMEngine, EngineType, get_engine_type
 from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
@@ -404,11 +404,12 @@ class AsyncLLMEngine:
             if self.engine_use_ray:
                 await self.engine.add_request.remote(**new_request)
             else:
-                if self.engine.engine_type == EngineType.MIXED:
+                # if self.engine.engine_type == EngineType.MIXED:
+                if get_engine_type() == EngineType.MIXED:
                     await self.engine.add_request_async(**new_request)
-                elif self.engine.engine_type == EngineType.PREFILL:
+                elif get_engine_type() == EngineType.PREFILL:
                     await self.engine.add_request_async(**new_request)
-                elif self.engine.engine_type == EngineType.DECODING:
+                elif get_engine_type() == EngineType.DECODING:
                     await self.engine.add_decoding_request_async(new_request)
 
         if finished_requests:
@@ -424,7 +425,7 @@ class AsyncLLMEngine:
             self._request_tracker.process_request_output(
                 request_output, verbose=self.log_requests)
 
-        if self.engine.engine_type == EngineType.PREFILL:
+        if get_engine_type() == EngineType.PREFILL:
             # prefilled_requests = set()
             for request_output in request_outputs:
                 # prefilled_requests.add(request_output.request_id)

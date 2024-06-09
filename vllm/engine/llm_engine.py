@@ -31,11 +31,18 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
 
+_ENGINE_TYPE = None
+
+
 class EngineType(enum.Enum):
     PREFILL = enum.auto()
     DECODING = enum.auto()
     MIXED = enum.auto()
 
+
+def get_engine_type():
+    assert _ENGINE_TYPE is not None, ( "_ENGINE_TYPE is not initialized")
+    return _ENGINE_TYPE
 
 class LLMEngine:
     """An LLM engine that receives requests and generates texts.
@@ -106,14 +113,7 @@ class LLMEngine:
         self.device_config = device_config
         self.log_stats = log_stats
 
-        if engine_type == "prefill":
-            self.engine_type = EngineType.PREFILL
-        elif engine_type == "decoding":
-            self.engine_type = EngineType.DECODING
-        elif engine_type == "mixed":
-            self.engine_type = EngineType.MIXED
-        else:
-            raise ValueError(f"Invalid engine_type: {engine_type}")
+        self.init_engine_type(engine_type)
 
         self._verify_args()
 
@@ -143,6 +143,17 @@ class LLMEngine:
 
     def get_tokenizer_for_seq(self, sequence: Sequence):
         return self.tokenizer.get_lora_tokenizer(sequence.lora_request)
+
+    def init_engine_type(self, engine_type: str):
+        global _ENGINE_TYPE
+        if engine_type == "prefill":
+            _ENGINE_TYPE = EngineType.PREFILL
+        elif engine_type == "decoding":
+            _ENGINE_TYPE = EngineType.DECODING
+        elif engine_type == "mixed":
+            _ENGINE_TYPE = EngineType.MIXED
+        else:
+            raise ValueError(f"Invalid engine_type: {engine_type}")
 
     def _init_workers(self):
         # Lazy import the Worker to avoid importing torch.cuda/xformers
