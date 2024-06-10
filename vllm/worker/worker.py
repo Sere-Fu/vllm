@@ -251,14 +251,14 @@ def init_distributed_environment(
         torch.distributed.init_process_group(
             backend="nccl",
             world_size=parallel_config.world_size,
-            rank=rank,
+            rank=rank + parallel_config.driver_rank,
             init_method=distributed_init_method,
         )
 
     # A small all_reduce for warmup.
-    torch.distributed.all_reduce(torch.zeros(1).cuda())
-    ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
-                                      parallel_config.pipeline_parallel_size)
+    torch.distributed.all_reduce(torch.zeros(1).cuda()) # we may need warmup in all workers(p and d)
+    ensure_model_parallel_initialized(parallel_config)
+    # torch.distributed.all_reduce(torch.zeros(1).cuda()) # if we only need warm up in tp workers
 
 
 def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype):

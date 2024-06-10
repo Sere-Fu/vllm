@@ -369,12 +369,16 @@ class ParallelConfig:
         worker_use_ray: bool,
         max_parallel_loading_workers: Optional[int] = None,
         disable_custom_all_reduce: bool = False,
+        grand_world_size: Optional[int] = None,
+        driver_rank: Optional[int] = None,
     ) -> None:
         self.pipeline_parallel_size = pipeline_parallel_size
         self.tensor_parallel_size = tensor_parallel_size
         self.worker_use_ray = worker_use_ray
         self.max_parallel_loading_workers = max_parallel_loading_workers
         self.disable_custom_all_reduce = disable_custom_all_reduce
+        self.grand_world_size = grand_world_size
+        self.driver_rank = driver_rank
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size
         if self.world_size > 1:
