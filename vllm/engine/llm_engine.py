@@ -1,5 +1,6 @@
 import enum
 import copy
+import uuid
 from collections import defaultdict
 import os
 import time
@@ -257,8 +258,9 @@ class LLMEngine:
 
         # distributed_init_method = get_distributed_init_method(
         #     driver_ip, get_open_port())
-        distributed_init_method = "tcp://127.0.0.1:8999"
+        # distributed_init_method = "tcp://127.0.0.1:8999"
 
+        distributed_init_method = f"file:///tmp/sharedFile{str(uuid.uuid4().hex)}"
         # Lazy import the Worker to avoid importing torch.cuda/xformers
         # before CUDA_VISIBLE_DEVICES is set in the Worker
         from vllm.worker.worker import Worker
