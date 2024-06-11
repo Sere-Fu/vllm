@@ -10,7 +10,8 @@ from vllm.config import (CacheConfig, DeviceConfig, ModelConfig,
                          ParallelConfig, SchedulerConfig, LoRAConfig)
 from vllm.model_executor import set_random_seed
 from vllm.model_executor.parallel_utils.communication_op import (
-    broadcast_tensor_dict)
+    tensor_model_parallel_all_reduce,
+    tensor_model_parallel_broadcast_tensor_dict)
 from vllm.model_executor.parallel_utils.custom_all_reduce import init_custom_ar
 from vllm.model_executor.parallel_utils.parallel_state import (
     ensure_model_parallel_initialized)
@@ -51,7 +52,7 @@ class Worker:
         self.lora_config = lora_config
         self.is_driver_worker = is_driver_worker
         if self.is_driver_worker:
-            assert self.rank == 0, "The driver worker must have rank 0."
+            assert self.rank == parallel_config.driver_rank, "The driver worker must have driver rank."
 
         self.model_runner = ModelRunner(model_config,
                                         parallel_config,
@@ -79,6 +80,7 @@ class Worker:
 
             # This env var set by Ray causes exceptions with graph building.
             os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
+            print(f"rank: {self.rank}, local_rank: {self.local_rank}")
             self.device = torch.device(f"cuda:{self.local_rank}")
             torch.cuda.set_device(self.device)
 
@@ -202,9 +204,11 @@ class Worker:
                 "blocks_to_swap_out": blocks_to_swap_out,
                 "blocks_to_copy": blocks_to_copy,
             }
-            broadcast_tensor_dict(data, src=0)
+            # broadcast_tensor_dict(data, src=0)
+            tensor_model_parallel_broadcast_tensor_dict(data, src=0)
         else:
-            data = broadcast_tensor_dict(src=0)
+            # data = broadcast_tensor_dict(src=0)
+            data = tensor_model_parallel_broadcast_tensor_dict(src=0)
             num_seq_groups = data["num_seq_groups"]
             blocks_to_swap_in = data["blocks_to_swap_in"]
             blocks_to_swap_out = data["blocks_to_swap_out"]
@@ -248,16 +252,22 @@ def init_distributed_environment(
             "distributed_init_method must be set if torch.distributed "
             "is not already initialized")
     else:
+        print(f"rank: {rank}, start init_process_group")
+        print(f"rank: {rank}, world_size: {parallel_config.grand_world_size}, init_method: {distributed_init_method}")
         torch.distributed.init_process_group(
             backend="nccl",
-            world_size=parallel_config.world_size,
-            rank=rank + parallel_config.driver_rank,
+            world_size=parallel_config.grand_world_size,
+            rank=rank,
             init_method=distributed_init_method,
         )
 
+
+    print(f"rank: {rank}, finish init_process_group")
+
     # A small all_reduce for warmup.
-    torch.distributed.all_reduce(torch.zeros(1).cuda()) # we may need warmup in all workers(p and d)
+    # torch.distributed.all_reduce(torch.zeros(1).cuda()) # we may need warmup in all workers(p and d)
     ensure_model_parallel_initialized(parallel_config)
+    tensor_model_parallel_all_reduce(torch.zeros(1).cuda())
     # torch.distributed.all_reduce(torch.zeros(1).cuda()) # if we only need warm up in tp workers
 
 

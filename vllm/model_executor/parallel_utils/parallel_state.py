@@ -83,15 +83,15 @@ def ensure_model_parallel_initialized( parallel_config: ParallelConfig) -> None:
         return
 
     assert (
-        get_tensor_model_parallel_world_size() == tensor_model_parallel_size
+        get_tensor_model_parallel_world_size() == parallel_config.tensor_parallel_size
     ), ("tensor parallel group already initialized, but of unexpected size: "
         f"{get_tensor_model_parallel_world_size()=} vs. "
-        f"{tensor_model_parallel_size=}")
+        f"{parallel_config.tensor_parallel_size=}")
     assert (get_pipeline_model_parallel_world_size(
-    ) == pipeline_model_parallel_size), (
+    ) == parallel_config.pipeline_parallel_size), (
         "pipeline parallel group already initialized, but of unexpected size: "
         f"{get_pipeline_model_parallel_world_size()=} vs. "
-        f"{pipeline_model_parallel_size=}")
+        f"{parallel_config.pipeline_parallel_size=}")
 
 
 def model_parallel_is_initialized():

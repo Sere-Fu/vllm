@@ -425,11 +425,11 @@ class AsyncLLMEngine:
             self._request_tracker.process_request_output(
                 request_output, verbose=self.log_requests)
 
-        if get_engine_type() == EngineType.PREFILL:
-            # prefilled_requests = set()
-            for request_output in request_outputs:
-                # prefilled_requests.add(request_output.request_id)
-                await self.abort(request_output.request_id)
+        # if get_engine_type() == EngineType.PREFILL:
+        #     # prefilled_requests = set()
+        #     for request_output in request_outputs:
+        #         # prefilled_requests.add(request_output.request_id)
+        #         await self.abort(request_output.request_id)
 
         return len(request_outputs) > 0
 
