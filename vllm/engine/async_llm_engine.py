@@ -1,5 +1,7 @@
 import asyncio
 import time
+import json
+import aiohttp
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
@@ -13,6 +15,7 @@ from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SequenceGroup
+from vllm.utils import marshalToB64String
 
 logger = init_logger(__name__)
 
@@ -425,11 +428,30 @@ class AsyncLLMEngine:
             self._request_tracker.process_request_output(
                 request_output, verbose=self.log_requests)
 
-        # if get_engine_type() == EngineType.PREFILL:
-        #     # prefilled_requests = set()
-        #     for request_output in request_outputs:
-        #         # prefilled_requests.add(request_output.request_id)
-        #         await self.abort(request_output.request_id)
+        if get_engine_type() == EngineType.PREFILL:
+            for request_output in request_outputs:
+                pload = {
+                    "sg": marshalToB64String(self.engine.scheduler.running[0]),
+                }
+
+                timeout = aiohttp.ClientTimeout(total=3 * 3600)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    while True:
+                        async with session.post("http://127.0.0.1:8001/decode",
+                                                headers={"User-Agent": "p-worker"},
+                                                json=pload) as response:
+                            chunks = []
+                            async for chunk, _ in response.content.iter_chunks():
+                                chunks.append(chunk)
+                        output = b"".join(chunks).decode("utf-8")
+                        output = json.loads(output)
+                        print('kangsan debug', output)
+
+                        # Re-send the request if it failed.
+                        if "error" not in output:
+                            break
+
+                await self.abort(request_output.request_id)
 
         return len(request_outputs) > 0
 
