@@ -260,7 +260,7 @@ class LLMEngine:
         #     driver_ip, get_open_port())
         # distributed_init_method = "tcp://127.0.0.1:8999"
 
-        distributed_init_method = f"file:///tmp/sharedFile{str(uuid.uuid4().hex)}"
+        distributed_init_method = f"file:///tmp/sharedFile"
         # Lazy import the Worker to avoid importing torch.cuda/xformers
         # before CUDA_VISIBLE_DEVICES is set in the Worker
         from vllm.worker.worker import Worker
@@ -494,7 +494,7 @@ class LLMEngine:
         self.scheduler.add_seq_group(seq_group)
 
     def add_decoding_request(self, seq_group: SequenceGroup):
-        if self.engine_type != EngineType.DECODING:
+        if get_engine_type() != EngineType.DECODING:
             raise ValueError(
                 "add_decoding_requests is only supported for EngineType.DECODING")
         self.scheduler.add_decoding_seq_group(seq_group)

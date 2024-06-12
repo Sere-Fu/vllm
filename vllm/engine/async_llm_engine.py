@@ -14,7 +14,7 @@ from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
-from vllm.sequence import SequenceGroup
+from vllm.sequence import SequenceGroup, SequenceStatus
 from vllm.utils import marshalToB64String
 
 logger = init_logger(__name__)
@@ -139,7 +139,7 @@ class RequestTracker:
             raise KeyError(f"Request {request_id} already exists.")
 
         stream = AsyncStream(request_id)
-        self._new_requests.put_nowait((stream, seq_group))
+        # self._new_requests.put_nowait((stream, seq_group))
 
         self.new_requests_event.set()
 
@@ -548,6 +548,10 @@ class AsyncLLMEngine:
                     "error that caused the background loop to stop "
                     "(AsyncEngineDeadError).")
 
+        for seq in seq_group.get_seqs():
+            seq.status = SequenceStatus.WAITING
+        self.engine.scheduler._allocate(seq_group)
+        self.engine.add_decoding_request(seq_group)
         stream = self._request_tracker.add_decoding_request(seq_group=seq_group)
 
         return stream
