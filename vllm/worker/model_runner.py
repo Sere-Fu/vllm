@@ -9,7 +9,7 @@ from vllm.config import DeviceConfig, ModelConfig, LoRAConfig, ParallelConfig, S
 from vllm.logger import init_logger
 from vllm.model_executor import get_model, InputMetadata, SamplingMetadata
 from vllm.model_executor.parallel_utils.communication_op import (
-    broadcast_tensor_dict)
+    tensor_model_parallel_broadcast_tensor_dict)
 from vllm.model_executor.parallel_utils import custom_all_reduce
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
@@ -497,9 +497,9 @@ class ModelRunner:
                 "lora_requests": lora_requests,
                 "lora_mapping": lora_mapping,
             }
-            broadcast_tensor_dict(metadata_dict, src=0)
+            tensor_model_parallel_broadcast_tensor_dict(metadata_dict, src=0)
         else:
-            metadata_dict = broadcast_tensor_dict(src=0)
+            metadata_dict = tensor_model_parallel_broadcast_tensor_dict(src=0)
             input_tokens = metadata_dict["input_tokens"]
             input_positions = metadata_dict["input_positions"]
             lora_mapping = metadata_dict["lora_mapping"]

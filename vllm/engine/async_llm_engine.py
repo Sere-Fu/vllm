@@ -7,7 +7,7 @@ from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
 from vllm.lora.request import LoRARequest
 from vllm.config import ModelConfig
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.engine.llm_engine import LLMEngine
+from vllm.engine.llm_engine import LLMEngine, EngineType, get_engine_type
 from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
@@ -161,7 +161,7 @@ class RequestTracker:
             self._request_streams[stream.request_id] = stream
             new_requests.append(new_request)
 
-        self.new_requests_event.clear()
+        self.new_requests_event.clear() # drain all requests at once
 
         return new_requests, finished_requests
 
@@ -627,6 +627,7 @@ class AsyncLLMEngine:
                      *engine_configs,
                      placement_group,
                      log_requests=not engine_args.disable_log_requests,
+                     engine_type=engine_args.engine_type,
                      log_stats=not engine_args.disable_log_stats,
                      max_log_len=engine_args.max_log_len,
                      start_engine_loop=start_engine_loop)

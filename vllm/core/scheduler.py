@@ -167,7 +167,7 @@ class Scheduler:
         now = time.monotonic()
 
         # Join waiting sequences if possible.
-        if not self.swapped:
+        if not self.swapped: # non empty [swapped] means no more [running] is allowed
             ignored_seq_groups: List[SequenceGroup] = []
             scheduled: List[SequenceGroup] = []
             # The total number of sequences on the fly, including the
@@ -190,7 +190,7 @@ class Scheduler:
                 assert len(waiting_seqs) == 1, (
                     "Waiting sequence group should have only one prompt "
                     "sequence.")
-                num_prompt_tokens = waiting_seqs[0].get_len()
+                num_prompt_tokens = waiting_seqs[0].get_len() # output token sure to be null?
                 if num_prompt_tokens > self.prompt_limit:
                     logger.warning(
                         f"Input prompt ({num_prompt_tokens} tokens) is too long"
@@ -202,7 +202,7 @@ class Scheduler:
                     continue
 
                 # If the sequence group cannot be allocated, stop.
-                can_allocate = self.block_manager.can_allocate(seq_group)
+                can_allocate = self.block_manager.can_allocate(seq_group) # single threaded, no gang scheduling is needed
                 if can_allocate == AllocStatus.LATER:
                     break
                 elif can_allocate == AllocStatus.NEVER:
@@ -255,6 +255,7 @@ class Scheduler:
 
             self.waiting.extendleft(leftover_waiting_sequences)
 
+            # todo: donot return here when (scheduled == None, ignored_seq_groups != None)
             if scheduled or ignored_seq_groups:
                 scheduler_outputs = SchedulerOutputs(
                     scheduled_seq_groups=scheduled,

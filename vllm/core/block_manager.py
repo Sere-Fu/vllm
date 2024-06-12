@@ -112,6 +112,7 @@ class BlockSpaceManager:
         num_free_gpu_blocks = self.gpu_allocator.get_num_free_blocks()
 
         # Use watermark to avoid frequent cache eviction.
+        # not allocate at all, otherwise swapped is likely to happen frequently
         if (self.num_total_gpu_blocks - num_required_blocks <
                 self.watermark_blocks):
             return AllocStatus.NEVER
@@ -291,7 +292,7 @@ class BlockSpaceManager:
                 new_block_table.append(cpu_block)
                 # Free the GPU block swapped out to CPU.
                 self.gpu_allocator.free(gpu_block)
-            self.block_tables[seq.seq_id] = new_block_table
+            self.block_tables[seq.seq_id] = new_block_table  # even swapped out, block table tracks
 
         block_number_mapping = {
             gpu_block.block_number: cpu_block.block_number

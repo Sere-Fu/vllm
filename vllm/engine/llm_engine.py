@@ -1,4 +1,6 @@
+import enum
 import copy
+import uuid
 from collections import defaultdict
 import os
 import time
@@ -30,6 +32,18 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
 
+_ENGINE_TYPE = None
+
+
+class EngineType(enum.Enum):
+    PREFILL = enum.auto()
+    DECODING = enum.auto()
+    MIXED = enum.auto()
+
+
+def get_engine_type():
+    assert _ENGINE_TYPE is not None, ( "_ENGINE_TYPE is not initialized")
+    return _ENGINE_TYPE
 
 class LLMEngine:
     """An LLM engine that receives requests and generates texts.
@@ -69,6 +83,7 @@ class LLMEngine:
         lora_config: Optional[LoRAConfig],
         placement_group: Optional["PlacementGroup"],
         log_stats: bool,
+        engine_type: str,
     ) -> None:
         logger.info(
             "Initializing an LLM engine with config: "
@@ -98,6 +113,9 @@ class LLMEngine:
         self.scheduler_config = scheduler_config
         self.device_config = device_config
         self.log_stats = log_stats
+
+        self.init_engine_type(engine_type)
+
         self._verify_args()
 
         self._init_tokenizer()
@@ -126,6 +144,17 @@ class LLMEngine:
 
     def get_tokenizer_for_seq(self, sequence: Sequence):
         return self.tokenizer.get_lora_tokenizer(sequence.lora_request)
+
+    def init_engine_type(self, engine_type: str):
+        global _ENGINE_TYPE
+        if engine_type == "prefill":
+            _ENGINE_TYPE = EngineType.PREFILL
+        elif engine_type == "decoding":
+            _ENGINE_TYPE = EngineType.DECODING
+        elif engine_type == "mixed":
+            _ENGINE_TYPE = EngineType.MIXED
+        else:
+            raise ValueError(f"Invalid engine_type: {engine_type}")
 
     def _init_workers(self):
         # Lazy import the Worker to avoid importing torch.cuda/xformers
@@ -227,8 +256,11 @@ class LLMEngine:
         for worker, (node_id, _) in zip(self.workers, worker_node_and_gpu_ids):
             worker.set_cuda_visible_devices.remote(node_gpus[node_id])
 
-        distributed_init_method = get_distributed_init_method(
-            driver_ip, get_open_port())
+        if get_engine_type() == EngineType.MIXED:
+            distributed_init_method = get_distributed_init_method(
+                driver_ip, get_open_port())
+        else:
+            distributed_init_method = f"file:///tmp/sharedFile"
 
         # Lazy import the Worker to avoid importing torch.cuda/xformers
         # before CUDA_VISIBLE_DEVICES is set in the Worker
@@ -252,7 +284,7 @@ class LLMEngine:
                     scheduler_config,
                     device_config,
                     local_rank,
-                    rank,
+                    rank+self.parallel_config.driver_rank,
                     distributed_init_method,
                     lora_config=self.lora_config,
                     kv_cache_dtype=self.cache_config.cache_dtype,
@@ -266,7 +298,7 @@ class LLMEngine:
             scheduler_config,
             device_config,
             driver_local_rank,
-            driver_rank,
+            driver_rank+self.parallel_config.driver_rank,
             distributed_init_method,
             lora_config=self.lora_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
@@ -360,6 +392,7 @@ class LLMEngine:
         # Create the LLM engine.
         engine = cls(*engine_configs,
                      placement_group,
+                     engine_type=engine_args.engine_type,
                      log_stats=not engine_args.disable_log_stats)
         return engine
 
