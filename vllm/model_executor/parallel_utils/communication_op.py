@@ -85,7 +85,8 @@ def tensor_model_parallel_gather(input_: torch.Tensor,
         # Convert negative dim to positive.
         dim += input_.dim()
     # Allocate output tensor.
-    if get_tensor_model_parallel_rank() == dst:
+    dst += torch.distributed.get_process_group_ranks(get_tensor_model_parallel_group())[0]
+    if torch.distributed.get_rank() == dst:
         gather_list = [torch.empty_like(input_) for _ in range(world_size)]
     else:
         gather_list = None
@@ -94,7 +95,7 @@ def tensor_model_parallel_gather(input_: torch.Tensor,
                              gather_list,
                              dst=dst,
                              group=get_tensor_model_parallel_group())
-    if get_tensor_model_parallel_rank() == dst:
+    if torch.distributed.get_rank() == dst:
         output_tensor = torch.cat(gather_list, dim=dim)
     else:
         output_tensor = None
@@ -198,4 +199,68 @@ def broadcast_tensor_dict(
                 tensor_dict[key] = value
         for async_handle in async_handles:
             async_handle.wait()
+    return tensor_dict
+
+def tensor_model_parallel_broadcast_tensor_dict(
+    tensor_dict: Optional[Dict[Any, Union[torch.Tensor, Any]]] = None,
+    src: int = 0,
+) -> Dict[Any, Union[torch.Tensor, Any]]:
+    """Broadcast the input tensor dictionary."""
+    # group = group or torch.distributed.group.WORLD
+    # ranks = torch.distributed.get_process_group_ranks(group)
+    # assert src in ranks, f"Invalid src rank ({src})"
+
+    world_size = get_tensor_model_parallel_world_size()
+    # Bypass the function if we are using only 1 GPU.
+    if world_size == 1:
+        return tensor_dict
+
+    rank = torch.distributed.get_rank()
+    src += torch.distributed.get_process_group_ranks(get_tensor_model_parallel_group())[0]
+    if rank == src:
+        assert isinstance(
+            tensor_dict,
+            dict), (f"Expecting a dictionary, got {type(tensor_dict)}")
+        metadata_list = []
+        for key, value in tensor_dict.items():
+            if isinstance(value, torch.Tensor):
+                assert value.is_cuda, (
+                    f"Tensor {key}: {value} is not on cuda. Currently we only "
+                    f"support broadcasting tensors on cuda.")
+                metadata_list.append(
+                    (key, TensorMetadata(value.dtype, value.size())))
+            else:
+                metadata_list.append((key, value))
+        torch.distributed.broadcast_object_list([metadata_list],
+                                                src=src,
+                                                group=get_tensor_model_parallel_group())
+        for key, value in metadata_list:
+            if isinstance(value, TensorMetadata):
+                tensor = tensor_dict[key]
+                torch.distributed.broadcast(tensor, src=src,
+                                            group=get_tensor_model_parallel_group())
+    else:
+        recv_metadata_list = [None]
+        torch.distributed.broadcast_object_list(recv_metadata_list,
+                                                src=src,
+                                                group=get_tensor_model_parallel_group())
+        metadata_list = recv_metadata_list[0]
+        tensor_dict = {}
+        async_handles = []
+        for key, value in metadata_list:
+            if isinstance(value, TensorMetadata):
+                tensor = torch.empty(value.size,
+                                     dtype=value.dtype,
+                                     device="cuda")
+                async_handle = torch.distributed.broadcast(tensor,
+                                                           src=src,
+                                                           async_op=True,
+                                                           group=get_tensor_model_parallel_group())
+                async_handles.append(async_handle)
+                tensor_dict[key] = tensor
+            else:
+                tensor_dict[key] = value
+        for async_handle in async_handles:
+            async_handle.wait()
+
     return tensor_dict

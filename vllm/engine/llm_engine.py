@@ -1,3 +1,5 @@
+import enum
+import uuid
 import time
 from typing import Iterable, List, Optional, Tuple, Type, Union
 
@@ -28,6 +30,19 @@ from vllm.utils import Counter
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
+
+_ENGINE_TYPE = None
+
+
+class EngineType(enum.Enum):
+    PREFILL = enum.auto()
+    DECODING = enum.auto()
+    MIXED = enum.auto()
+
+
+def get_engine_type():
+    assert _ENGINE_TYPE is not None, ( "_ENGINE_TYPE is not initialized")
+    return _ENGINE_TYPE
 
 
 class LLMEngine:
@@ -70,6 +85,7 @@ class LLMEngine:
         vision_language_config: Optional["VisionLanguageConfig"],
         executor_class: Type[ExecutorBase],
         log_stats: bool,
+        engine_type: str,
         usage_context: UsageContext = UsageContext.ENGINE_CONTEXT,
     ) -> None:
         logger.info(
@@ -102,6 +118,9 @@ class LLMEngine:
         self.scheduler_config = scheduler_config
         self.device_config = device_config
         self.log_stats = log_stats
+
+        self.init_engine_type(engine_type)
+
         self._verify_args()
 
         self._init_tokenizer()
@@ -191,6 +210,7 @@ class LLMEngine:
         # Create the LLM engine.
         engine = cls(
             *engine_configs,
+            engine_type=engine_args.engine_type,
             executor_class=executor_class,
             log_stats=not engine_args.disable_log_stats,
             usage_context=usage_context,
@@ -208,6 +228,17 @@ class LLMEngine:
     def get_tokenizer_for_seq(self,
                               sequence: Sequence) -> "PreTrainedTokenizer":
         return self.tokenizer.get_lora_tokenizer(sequence.lora_request)
+
+    def init_engine_type(self, engine_type: str):
+        global _ENGINE_TYPE
+        if engine_type == "prefill":
+            _ENGINE_TYPE = EngineType.PREFILL
+        elif engine_type == "decoding":
+            _ENGINE_TYPE = EngineType.DECODING
+        elif engine_type == "mixed":
+            _ENGINE_TYPE = EngineType.MIXED
+        else:
+            raise ValueError(f"Invalid engine_type: {engine_type}")
 
     def _init_tokenizer(self, **tokenizer_init_kwargs):
         init_kwargs = dict(

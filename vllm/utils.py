@@ -5,6 +5,8 @@ import os
 import socket
 import subprocess
 import uuid
+import base64
+import pickle
 import warnings
 from collections import OrderedDict
 from functools import lru_cache, partial
@@ -438,3 +440,9 @@ def maybe_expand_dim(tensor: torch.Tensor,
     if tensor.ndim < target_dims:
         tensor = tensor.view(-1, *([size] * (target_dims - tensor.ndim)))
     return tensor
+
+def marshalToB64String(obj: Any) -> str:
+    return base64.b64encode(pickle.dumps(obj)).decode("utf-8")
+
+def unmarshalFromB64String(s: str) -> Any:
+    return pickle.loads(base64.b64decode(s.encode("utf-8")))

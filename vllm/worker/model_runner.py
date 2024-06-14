@@ -17,7 +17,7 @@ from vllm.model_executor import SamplingMetadata
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.parallel_utils import custom_all_reduce, pynccl_utils
 from vllm.model_executor.parallel_utils.communication_op import (
-    broadcast_tensor_dict)
+    tensor_model_parallel_broadcast_tensor_dict)
 from vllm.model_executor.parallel_utils.parallel_state import (
     with_pynccl_for_all_reduce)
 from vllm.sampling_params import SamplingParams, SamplingType
@@ -608,9 +608,9 @@ class ModelRunner:
                 "multi_modal_input": multi_modal_input,
             }
             metadata_dict.update(attn_metadata.asdict_zerocopy())
-            broadcast_tensor_dict(metadata_dict, src=0)
+            tensor_model_parallel_broadcast_tensor_dict(metadata_dict, src=0)
         else:
-            metadata_dict = broadcast_tensor_dict(src=0)
+            metadata_dict = tensor_model_parallel_broadcast_tensor_dict(src=0)
             input_tokens = metadata_dict.pop("input_tokens")
             input_positions = metadata_dict.pop("input_positions")
             selected_token_indices = metadata_dict.pop(

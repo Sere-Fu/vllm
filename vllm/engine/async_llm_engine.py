@@ -351,6 +351,7 @@ class AsyncLLMEngine:
             *engine_configs,
             executor_class,
             log_requests=not engine_args.disable_log_requests,
+            engine_type=engine_args.engine_type,
             log_stats=not engine_args.disable_log_stats,
             max_log_len=engine_args.max_log_len,
             start_engine_loop=start_engine_loop,

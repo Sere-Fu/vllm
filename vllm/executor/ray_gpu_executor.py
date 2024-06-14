@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from vllm.config import (CacheConfig, DeviceConfig, LoRAConfig, ModelConfig,
                          ParallelConfig, SchedulerConfig, VisionLanguageConfig)
 from vllm.engine.ray_utils import RayWorkerVllm, ray
+from vllm.engine.llm_engine import get_engine_type, EngineType
 from vllm.executor.executor_base import ExecutorAsyncBase, ExecutorBase
 from vllm.executor.utils import check_block_size_valid
 from vllm.logger import init_logger
@@ -138,8 +139,11 @@ class RayGPUExecutor(ExecutorBase):
         for worker, (node_id, _) in zip(self.workers, worker_node_and_gpu_ids):
             worker.set_cuda_visible_devices.remote(node_gpus[node_id])
 
-        distributed_init_method = get_distributed_init_method(
-            driver_ip, get_open_port())
+        if get_engine_type() == EngineType.MIXED:
+            distributed_init_method = get_distributed_init_method(
+                driver_ip, get_open_port())
+        else:
+            distributed_init_method = f"file:///tmp/sharedFile"
 
         # Lazy import the Worker to avoid importing torch.cuda/xformers
         # before CUDA_VISIBLE_DEVICES is set in the Worker
@@ -165,7 +169,7 @@ class RayGPUExecutor(ExecutorBase):
                     scheduler_config,
                     device_config,
                     local_rank,
-                    rank,
+                    rank+self.parallel_config.driver_rank,
                     distributed_init_method,
                     lora_config=lora_config,
                     kv_cache_dtype=kv_cache_dtype,
@@ -180,7 +184,7 @@ class RayGPUExecutor(ExecutorBase):
             self.scheduler_config,
             self.device_config,
             driver_local_rank,
-            driver_rank,
+            driver_rank+self.parallel_config.driver_rank,
             distributed_init_method,
             lora_config=self.lora_config,
             vision_language_config=self.vision_language_config,

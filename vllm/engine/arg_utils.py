@@ -400,7 +400,9 @@ class EngineArgs:
                 self.tokenizer_pool_size,
                 self.tokenizer_pool_type,
                 self.tokenizer_pool_extra_config,
-            ), self.ray_workers_use_nsight)
+            ), self.ray_workers_use_nsight,
+            grand_world_size=self.grand_world_size,
+            driver_rank=self.driver_rank)
         scheduler_config = SchedulerConfig(
             self.max_num_batched_tokens,
             self.max_num_seqs,
@@ -443,6 +445,9 @@ class AsyncEngineArgs(EngineArgs):
     engine_use_ray: bool = False
     disable_log_requests: bool = False
     max_log_len: Optional[int] = None
+    engine_type: Optional[str] = 'mixed'
+    grand_world_size: int = 1
+    driver_rank: int = 0
 
     @staticmethod
     def add_cli_args(
@@ -461,4 +466,19 @@ class AsyncEngineArgs(EngineArgs):
                             help='max number of prompt characters or prompt '
                             'ID numbers being printed in log. '
                             'Default: unlimited.')
+        parser.add_argument(
+            '--engine-type',
+            type=str,
+            default=AsyncEngineArgs.engine_type,
+            help='engine type')
+        parser.add_argument(
+            '--grand-world-size',
+            type=int,
+            default=AsyncEngineArgs.grand_world_size,
+            help='world size of all workers')
+        parser.add_argument(
+            '--driver-rank',
+            type=int,
+            default=AsyncEngineArgs.driver_rank,
+            help='rank of driver worker')
         return parser

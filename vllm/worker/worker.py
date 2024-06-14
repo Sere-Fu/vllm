@@ -12,7 +12,7 @@ from vllm.lora.request import LoRARequest
 from vllm.model_executor import set_random_seed
 from vllm.model_executor.parallel_utils import pynccl_utils
 from vllm.model_executor.parallel_utils.communication_op import (
-    broadcast_tensor_dict)
+    tensor_model_parallel_broadcast_tensor_dict)
 from vllm.model_executor.parallel_utils.custom_all_reduce import init_custom_ar
 from vllm.model_executor.parallel_utils.parallel_state import (
     ensure_model_parallel_initialized)
@@ -53,7 +53,7 @@ class Worker:
         self.lora_config = lora_config
         self.is_driver_worker = is_driver_worker
         if self.is_driver_worker:
-            assert self.rank == 0, "The driver worker must have rank 0."
+            assert self.rank == parallel_config.driver_rank, "The driver worker must have driver rank."
 
         self.vision_language_config = vision_language_config
         if self.vision_language_config:
@@ -204,9 +204,9 @@ class Worker:
                 "blocks_to_swap_out": blocks_to_swap_out,
                 "blocks_to_copy": blocks_to_copy,
             }
-            broadcast_tensor_dict(data, src=0)
+            tensor_model_parallel_broadcast_tensor_dict(data, src=0)
         else:
-            data = broadcast_tensor_dict(src=0)
+            data = tensor_model_parallel_broadcast_tensor_dict(src=0)
             num_seq_groups = data["num_seq_groups"]
             blocks_to_swap_in = data["blocks_to_swap_in"]
             blocks_to_swap_out = data["blocks_to_swap_out"]
@@ -269,7 +269,7 @@ def init_distributed_environment(
     else:
         torch.distributed.init_process_group(
             backend="nccl",
-            world_size=parallel_config.world_size,
+            world_size=parallel_config.grand_world_size,
             rank=rank,
             init_method=distributed_init_method,
         )
@@ -285,7 +285,7 @@ def init_distributed_environment(
         # NOTE(woosuk): We don't initialize pynccl process group when world size
         # is 1.
         pynccl_utils.init_process_group(
-            world_size=parallel_config.world_size,
+            world_size=parallel_config.grand_world_size,
             local_rank=local_rank,
             rank=rank,
             init_method=distributed_init_method,
@@ -295,8 +295,7 @@ def init_distributed_environment(
     torch.distributed.all_reduce(torch.zeros(1).cuda())
     if pynccl_utils.is_initialized():
         pynccl_utils.all_reduce(torch.zeros(1).cuda())
-    ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
-                                      parallel_config.pipeline_parallel_size)
+    ensure_model_parallel_initialized(parallel_config)
 
     # Initialize a custom fast all-reduce implementation.
     if not parallel_config.disable_custom_all_reduce:
