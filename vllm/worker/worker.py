@@ -14,6 +14,7 @@ from vllm.model_executor.parallel_utils.communication_op import (
     tensor_model_parallel_broadcast_tensor_dict)
 from vllm.model_executor.parallel_utils.custom_all_reduce import init_custom_ar
 from vllm.model_executor.parallel_utils.parallel_state import (
+    get_tensor_model_parallel_group,
     ensure_model_parallel_initialized)
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
@@ -249,16 +250,22 @@ def init_distributed_environment(
             "distributed_init_method must be set if torch.distributed "
             "is not already initialized")
     else:
+        print(f"rank: {rank}, start init_process_group")
+        print(f"rank: {rank}, world_size: {parallel_config.grand_world_size}, init_method: {distributed_init_method}")
         torch.distributed.init_process_group(
             backend="nccl",
             world_size=parallel_config.grand_world_size,
             rank=rank,
             init_method=distributed_init_method,
         )
+        print(f"rank: {rank}, finish init_process_group")
 
     # A small all_reduce for warmup.
+    torch.distributed.all_reduce(torch.zeros(1).cuda())
+    print(f"rank: {rank}, global warm up finished")
     ensure_model_parallel_initialized(parallel_config)
-    tensor_model_parallel_all_reduce(torch.zeros(1).cuda())
+    req = torch.distributed.all_reduce(torch.zeros(1).cuda(), group=get_tensor_model_parallel_group(), async_op=True)
+    req.wait()
 
 
 def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype):

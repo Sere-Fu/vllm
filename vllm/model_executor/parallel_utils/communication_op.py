@@ -31,8 +31,10 @@ def tensor_model_parallel_all_reduce(input_: torch.Tensor) -> torch.Tensor:
     out = custom_all_reduce(input_)
     if out is not None:
         return out
+    print(f"start torch.distributed.all_reduce: {torch.distributed.get_process_group_ranks(get_tensor_model_parallel_group())}")
     torch.distributed.all_reduce(input_,
                                  group=get_tensor_model_parallel_group())
+    print(f"finish torch.distributed.all_reduce: {torch.distributed.get_process_group_ranks(get_tensor_model_parallel_group())}")
     return input_
 
 

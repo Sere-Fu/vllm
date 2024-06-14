@@ -256,6 +256,7 @@ class LLMEngine:
         for worker, (node_id, _) in zip(self.workers, worker_node_and_gpu_ids):
             worker.set_cuda_visible_devices.remote(node_gpus[node_id])
 
+        # distributed_init_method = "tcp://127.0.0.1:8999"
         if get_engine_type() == EngineType.MIXED:
             distributed_init_method = get_distributed_init_method(
                 driver_ip, get_open_port())

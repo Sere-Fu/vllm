@@ -1,8 +1,11 @@
 import asyncio
 import time
+import json
+import torch
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
+import aiohttp
 
 from vllm.lora.request import LoRARequest
 from vllm.config import ModelConfig
@@ -12,6 +15,8 @@ from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
+from vllm.sequence import SequenceGroupMetadata, SequenceGroupOutput, SequenceOutput
+from vllm.utils import marshalToB64String
 
 logger = init_logger(__name__)
 
@@ -185,22 +190,50 @@ class _AsyncLLMEngine(LLMEngine):
         seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
 
         if not scheduler_outputs.is_empty():
+            if scheduler_outputs.prompt_run and get_engine_type() == EngineType.DECODING:
+                output = await self.prefill_remote(seq_group_metadata_list)
+            else:
             # Execute the model.
-            all_outputs = await self._run_workers_async(
-                "execute_model",
-                driver_kwargs={
-                    "seq_group_metadata_list": seq_group_metadata_list,
-                    "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
-                    "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
-                    "blocks_to_copy": scheduler_outputs.blocks_to_copy,
-                })
+                all_outputs = await self._run_workers_async(
+                    "execute_model",
+                    driver_kwargs={
+                        "seq_group_metadata_list": seq_group_metadata_list,
+                        "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
+                        "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
+                        "blocks_to_copy": scheduler_outputs.blocks_to_copy,
+                    })
 
-            # Only the driver worker returns the sampling results.
-            output = all_outputs[0]
+                # Only the driver worker returns the sampling results.
+                output = all_outputs[0]
         else:
             output = []
 
         return self._process_model_outputs(output, scheduler_outputs)
+
+    async def prefill_remote(self, seq_group_metadata_list: List[SequenceGroupMetadata]) -> List[SequenceGroupOutput]:
+        pload = {
+            "encoded_seq_group_metadata_list": marshalToB64String(seq_group_metadata_list),
+            "from_rank": torch.distributed.get_rank(),
+        }
+
+        timeout = aiohttp.ClientTimeout(total=3 * 3600)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                async with session.post("http://127.0.0.1:8000/prefill",
+                                        headers={"User-Agent": "d-worker"},
+                                        json=pload) as response:
+                    chunks = []
+                    async for chunk, _ in response.content.iter_chunks():
+                        chunks.append(chunk)
+                output = b"".join(chunks).decode("utf-8")
+                output = json.loads(output)
+                print('kangsan debug', output)
+
+                # Re-send the request if it failed.
+                if "error" not in output:
+                    break
+
+        return output
 
     async def encode_request_async(
         self,
