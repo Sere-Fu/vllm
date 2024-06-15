@@ -264,8 +264,6 @@ def init_distributed_environment(
     torch.distributed.all_reduce(torch.zeros(1).cuda())
     print(f"rank: {rank}, global warm up finished")
     ensure_model_parallel_initialized(parallel_config)
-    req = torch.distributed.all_reduce(torch.zeros(1).cuda(), group=get_tensor_model_parallel_group(), async_op=True)
-    req.wait()
 
 
 def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype):

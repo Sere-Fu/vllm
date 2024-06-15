@@ -165,15 +165,16 @@ class LLMEngine:
             "Ray is required if parallel_config.world_size > 1.")
 
         self.workers: List[Worker] = []
-        distributed_init_method = get_distributed_init_method(
-            get_ip(), get_open_port())
+        # distributed_init_method = get_distributed_init_method(
+        #     get_ip(), get_open_port())
+        distributed_init_method = "tcp://127.0.0.1:9999"
         self.driver_worker = Worker(
             self.model_config,
             self.parallel_config,
             self.scheduler_config,
             self.device_config,
             local_rank=0,
-            rank=0,
+            rank=0+self.parallel_config.driver_rank,
             distributed_init_method=distributed_init_method,
             lora_config=self.lora_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
@@ -256,12 +257,12 @@ class LLMEngine:
         for worker, (node_id, _) in zip(self.workers, worker_node_and_gpu_ids):
             worker.set_cuda_visible_devices.remote(node_gpus[node_id])
 
-        # distributed_init_method = "tcp://127.0.0.1:8999"
-        if get_engine_type() == EngineType.MIXED:
-            distributed_init_method = get_distributed_init_method(
-                driver_ip, get_open_port())
-        else:
-            distributed_init_method = f"file:///tmp/sharedFile"
+        distributed_init_method = "tcp://127.0.0.1:9999"
+        # if get_engine_type() == EngineType.MIXED:
+        #     distributed_init_method = get_distributed_init_method(
+        #         driver_ip, get_open_port())
+        # else:
+        #     distributed_init_method = f"file:///tmp/sharedFile"
 
         # Lazy import the Worker to avoid importing torch.cuda/xformers
         # before CUDA_VISIBLE_DEVICES is set in the Worker
