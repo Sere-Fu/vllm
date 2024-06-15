@@ -15,8 +15,9 @@ from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
+from vllm.sequence import SamplerOutput
 from vllm.sequence import SequenceGroupMetadata, SequenceGroupOutput, SequenceOutput
-from vllm.utils import marshalToB64String
+from vllm.utils import marshalToB64String, unmarshalFromB64String
 
 logger = init_logger(__name__)
 
@@ -232,6 +233,25 @@ class _AsyncLLMEngine(LLMEngine):
                 # Re-send the request if it failed.
                 if "error" not in output:
                     break
+
+        return unmarshalFromB64String(output['encoded_output'])
+
+    async def prefill(
+        self,
+        seq_group_metadata_list: List[SequenceGroupMetadata],
+        from_rank: int,
+    ) -> Optional[SamplerOutput]:
+        if seq_group_metadata_list:
+            all_outputs = await self._run_workers_async(
+                "prefill",
+                driver_kwargs={
+                    "seq_group_metadata_list": seq_group_metadata_list,
+                })
+
+            # Only the driver worker returns the sampling results.
+            output = all_outputs[0]
+        else:
+            output = []
 
         return output
 
@@ -605,6 +625,13 @@ class AsyncLLMEngine:
             # request.
             self._abort(request_id)
             raise e
+
+    async def prefill(
+        self,
+        sequence_group_metadata_list: List[SequenceGroupMetadata],
+        from_rank: int,
+    ) -> Optional[SamplerOutput]:
+        return await self.engine.prefill(sequence_group_metadata_list, from_rank)
 
     async def abort(self, request_id: str) -> None:
         """Abort a request.

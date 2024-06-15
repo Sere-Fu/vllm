@@ -9,7 +9,7 @@ import uvicorn
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
-from vllm.utils import random_uuid, unmarshalFromB64String
+from vllm.utils import random_uuid, unmarshalFromB64String, marshalToB64String
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
@@ -83,24 +83,9 @@ async def prefill(request: Request) -> Response:
     from_rank = request_dict.pop("from_rank")
     seq_group_metadata_list = unmarshalFromB64String(request_dict.pop("encoded_seq_group_metadata_list"))
 
-    # results_generator = engine.generate(prompt,
-    #                                     sampling_params,
-    #                                     request_id,
-    #                                     prefix_pos=prefix_pos)
+    output = await engine.prefill(seq_group_metadata_list, from_rank)
 
-    # final_output = None
-    # async for request_output in results_generator:
-    #     if await request.is_disconnected():
-    #         # Abort the request if the client disconnects.
-    #         await engine.abort(request_id)
-    #         return Response(status_code=499)
-    #     final_output = request_output
-
-    # assert final_output is not None
-    # prompt = final_output.prompt
-    # text_outputs = [prompt + output.text for output in final_output.outputs]
-    # ret = {"text": text_outputs}
-    ret = {"text": "prefill"}
+    ret = {"encoded_output":  marshalToB64String(output)}
     return JSONResponse(ret)
 
 

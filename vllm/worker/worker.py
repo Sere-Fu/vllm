@@ -222,6 +222,31 @@ class Worker:
                                                  self.gpu_cache)
         return output
 
+    @torch.inference_mode()
+    def prefill(
+        self,
+        seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None,
+    ) -> Optional[SamplerOutput]:
+        if self.is_driver_worker:
+            assert seq_group_metadata_list is not None
+            num_seq_groups = len(seq_group_metadata_list)
+            data = {
+                "num_seq_groups": num_seq_groups,
+            }
+            tensor_model_parallel_broadcast_tensor_dict(data, src=0)
+        else:
+            data = tensor_model_parallel_broadcast_tensor_dict(src=0)
+            num_seq_groups = data["num_seq_groups"]
+
+        # If there is no input, we don't need to execute the model.
+        if num_seq_groups == 0:
+            return {}
+
+        num_layers = self.model_config.get_num_layers(self.parallel_config)
+        output = self.model_runner.execute_model(seq_group_metadata_list,
+                                                 [(None, None)] * num_layers)
+        return output
+
     def add_lora(self, lora_request: LoRARequest) -> bool:
         return self.model_runner.add_lora(lora_request)
 
