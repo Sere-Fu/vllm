@@ -14,6 +14,7 @@ from vllm.core.scheduler import Scheduler, SchedulerOutputs
 from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.metrics import StatLogger, Stats
 from vllm.engine.ray_utils import RayWorkerVllm, initialize_cluster, ray
+from vllm.worker.worker import WorkerType
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
@@ -44,6 +45,17 @@ class EngineType(enum.Enum):
 def get_engine_type():
     assert _ENGINE_TYPE is not None, ( "_ENGINE_TYPE is not initialized")
     return _ENGINE_TYPE
+
+def get_worker_type():
+    assert _ENGINE_TYPE is not None, ( "_ENGINE_TYPE is not initialized")
+    if get_engine_type() == EngineType.MIXED:
+        return WorkerType.MIXED
+    elif get_engine_type() == EngineType.PREFILL:
+        return WorkerType.PREFILL
+    elif get_engine_type() == EngineType.DECODING:
+        return WorkerType.DECODING
+    else:
+        raise ValueError(f"Invalid engine_type: {get_engine_type()}")
 
 class LLMEngine:
     """An LLM engine that receives requests and generates texts.
@@ -179,6 +191,7 @@ class LLMEngine:
             lora_config=self.lora_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
             is_driver_worker=True,
+            worker_type=get_worker_type,
         )
         self._run_workers("init_model")
         self._run_workers("load_model")
@@ -290,6 +303,7 @@ class LLMEngine:
                     distributed_init_method,
                     lora_config=self.lora_config,
                     kv_cache_dtype=self.cache_config.cache_dtype,
+                    worker_type=get_worker_type,
                 ))
 
         driver_rank = 0
@@ -305,6 +319,7 @@ class LLMEngine:
             lora_config=self.lora_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
             is_driver_worker=True,
+            worker_type=get_worker_type,
         )
 
         self._run_workers("init_model")

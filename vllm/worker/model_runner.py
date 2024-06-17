@@ -446,6 +446,7 @@ class ModelRunner:
     def prepare_input_tensors(
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
+        to_rank: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, InputMetadata, SamplingMetadata,
                Set[int], LoRAMapping]:
         if self.is_driver_worker:
@@ -525,6 +526,14 @@ class ModelRunner:
                 perform_sampling=False,
             )
 
+        if to_rank != -1:
+            assert seq_group_metadata_list[0].block_tables is not None
+            input_metadata.blocks_to_send = [block for blocks in seq_group_metadata_list[0].block_tables.values() for block in blocks]
+            input_metadata.to_rank = to_rank
+        else:
+            input_metadata.blocks_to_send = []
+            input_metadata.to_rank = -1
+
         return (input_tokens, input_positions, input_metadata,
                 sampling_metadata, lora_requests, lora_mapping)
 
@@ -536,7 +545,41 @@ class ModelRunner:
     ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
          lora_requests,
-         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list)
+         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, -1)
+
+        if self.lora_config:
+            self.set_active_loras(lora_requests, lora_mapping)
+
+        # Execute the model.
+        if input_metadata.use_cuda_graph:
+            graph_batch_size = input_tokens.shape[0]
+            model_executable = self.graph_runners[graph_batch_size]
+        else:
+            model_executable = self.model
+        hidden_states = model_executable(
+            input_ids=input_tokens,
+            positions=input_positions,
+            kv_caches=kv_caches,
+            input_metadata=input_metadata,
+        )
+
+        # Sample the next token.
+        output = self.model.sample(
+            hidden_states=hidden_states,
+            sampling_metadata=sampling_metadata,
+        )
+        return output
+
+    @torch.inference_mode()
+    def prefill(
+        self,
+        seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
+        kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
+        to_rank: int,
+    ) -> Optional[SamplerOutput]:
+        (input_tokens, input_positions, input_metadata, sampling_metadata,
+         lora_requests,
+         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, to_rank)
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)

@@ -1,6 +1,7 @@
 """A GPU worker class."""
 import gc
 import os
+import enum
 from typing import Dict, List, Tuple, Set, Optional
 
 import torch
@@ -20,6 +21,12 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
+
+
+class WorkerType(enum.Enum):
+    PREFILL = enum.auto()
+    DECODING = enum.auto()
+    MIXED = enum.auto()
 
 
 class Worker:
@@ -42,6 +49,7 @@ class Worker:
         lora_config: Optional[LoRAConfig] = None,
         kv_cache_dtype: Optional[str] = "auto",
         is_driver_worker: bool = False,
+        worker_type: WorkerType = WorkerType.MIXED,
     ) -> None:
         self.model_config = model_config
         self.parallel_config = parallel_config
@@ -52,6 +60,7 @@ class Worker:
         self.distributed_init_method = distributed_init_method
         self.lora_config = lora_config
         self.is_driver_worker = is_driver_worker
+        self.worker_type = worker_type
         if self.is_driver_worker:
             assert self.rank == parallel_config.driver_rank, "The driver worker must have driver rank."
 
@@ -226,6 +235,7 @@ class Worker:
     def prefill(
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None,
+        to_rank: Optional[int] = None,
     ) -> Optional[SamplerOutput]:
         if self.is_driver_worker:
             assert seq_group_metadata_list is not None
@@ -243,8 +253,10 @@ class Worker:
             return {}
 
         num_layers = self.model_config.get_num_layers(self.parallel_config)
-        output = self.model_runner.execute_model(seq_group_metadata_list,
-                                                 [(None, None)] * num_layers)
+        output = self.model_runner.prefill(seq_group_metadata_list,
+                                                #  [(None, None)] * num_layers,
+                                                self.gpu_cache,
+                                                 to_rank)
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:
@@ -288,6 +300,15 @@ def init_distributed_environment(
     # A small all_reduce for warmup.
     torch.distributed.all_reduce(torch.zeros(1).cuda())
     print(f"rank: {rank}, global warm up finished")
+
+    if parallel_config.grand_world_size != parallel_config.world_size:
+        if rank == 0:
+            req = torch.distributed.isend(torch.zeros(1).cuda(), 1)
+            req.wait()
+        else:
+            req = torch.distributed.irecv(torch.zeros(1).cuda(), 0)
+            req.wait()
+    print(f"rank: {rank}, p2p warm up finished")
     ensure_model_parallel_initialized(parallel_config)
 
 

@@ -234,7 +234,21 @@ class _AsyncLLMEngine(LLMEngine):
                 if "error" not in output:
                     break
 
+        await self.receive_kv_cache(seq_group_metadata_list)
+
         return unmarshalFromB64String(output['encoded_output'])
+
+    async def receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
+        assert get_engine_type() == EngineType.DECODING
+        blocks_to_receive = [block for blocks in seq_group_metadata_list[0].block_tables.values() for block in blocks]
+        for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
+            reqs = []
+            for i in blocks_to_receive:
+                reqs.append(torch.distributed.irecv(key_cache[i], src=0))
+                reqs.append(torch.distributed.irecv(value_cache[i], src=0))
+            for req in reqs:
+                req.wait()
+
 
     async def prefill(
         self,
@@ -246,6 +260,7 @@ class _AsyncLLMEngine(LLMEngine):
                 "prefill",
                 driver_kwargs={
                     "seq_group_metadata_list": seq_group_metadata_list,
+                    "to_rank": from_rank,
                 })
 
             # Only the driver worker returns the sampling results.
