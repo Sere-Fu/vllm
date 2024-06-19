@@ -528,7 +528,7 @@ class ModelRunner:
 
         if to_rank != -1:
             assert seq_group_metadata_list[0].block_tables is not None
-            input_metadata.blocks_to_send = [block for blocks in seq_group_metadata_list[0].block_tables.values() for block in blocks]
+            input_metadata.blocks_to_send = [block for blocks in seq_group_metadata_list[0].block_tables.values() for block in blocks][:40]
             input_metadata.to_rank = to_rank
         else:
             input_metadata.blocks_to_send = []

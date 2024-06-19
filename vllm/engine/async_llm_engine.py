@@ -218,6 +218,7 @@ class _AsyncLLMEngine(LLMEngine):
         }
 
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
+        task = asyncio.create_task(self.receive_kv_cache(seq_group_metadata_list))
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
                 async with session.post("http://127.0.0.1:8000/prefill",
@@ -228,26 +229,27 @@ class _AsyncLLMEngine(LLMEngine):
                         chunks.append(chunk)
                 output = b"".join(chunks).decode("utf-8")
                 output = json.loads(output)
-                print('kangsan debug', output)
 
                 # Re-send the request if it failed.
                 if "error" not in output:
                     break
 
-        await self.receive_kv_cache(seq_group_metadata_list)
+        reqs = await asyncio.gather(task)
+        for req in reqs[0]:
+            while not req.is_completed():
+                pass
 
         return unmarshalFromB64String(output['encoded_output'])
 
     async def receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
         assert get_engine_type() == EngineType.DECODING
-        blocks_to_receive = [block for blocks in seq_group_metadata_list[0].block_tables.values() for block in blocks]
+        reqs = []
+        blocks_to_receive = [block for blocks in seq_group_metadata_list[0].block_tables.values() for block in blocks][:40]
         for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
-            reqs = []
             for i in blocks_to_receive:
                 reqs.append(torch.distributed.irecv(key_cache[i], src=0))
                 reqs.append(torch.distributed.irecv(value_cache[i], src=0))
-            for req in reqs:
-                req.wait()
+        return reqs
 
 
     async def prefill(
