@@ -103,10 +103,10 @@ class PagedAttention(nn.Module):
 
         if input_metadata.to_rank != -1:
             assert input_metadata.is_prompt
-            assert input_metadata.blocks_to_send is not None
-            for i in input_metadata.blocks_to_send:
-                torch.distributed.isend(key_cache[i], input_metadata.to_rank)
-                torch.distributed.isend(value_cache[i], input_metadata.to_rank)
+            assert input_metadata.to_send is not None
+            for start, l in input_metadata.to_send:
+                torch.distributed.isend(key_cache[start: start+l], input_metadata.to_rank)
+                torch.distributed.isend(value_cache[start: start+l], input_metadata.to_rank)
 
         if input_metadata.is_prompt:
             # Prompt run.

@@ -17,7 +17,7 @@ from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SamplerOutput
 from vllm.sequence import SequenceGroupMetadata, SequenceGroupOutput, SequenceOutput
-from vllm.utils import marshalToB64String, unmarshalFromB64String
+from vllm.utils import marshalToB64String, unmarshalFromB64String, coalesce_blocks
 
 logger = init_logger(__name__)
 
@@ -244,16 +244,14 @@ class _AsyncLLMEngine(LLMEngine):
     async def receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
         assert get_engine_type() == EngineType.DECODING
         reqs = []
-        blocks_to_receive = [
-            block
-            for seq_group_metadata in seq_group_metadata_list
-            for blocks in seq_group_metadata.block_tables.values()
-            for block in blocks
-            ]
+        to_receive = coalesce_blocks([block
+                                      for seq_group_metadata in seq_group_metadata_list
+                                      for blocks in seq_group_metadata.block_tables.values()
+                                      for block in blocks ])
         for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
-            for i, block in enumerate(blocks_to_receive):
-                reqs.append(torch.distributed.irecv(key_cache[block], src=0))
-                reqs.append(torch.distributed.irecv(value_cache[block], src=0))
+            for i, (start, l) in enumerate(to_receive):
+                reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=0))
+                reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=0))
                 if i % 40 == 0:
                     await asyncio.sleep(0) # to many successive irecv will block the main thread
         return reqs

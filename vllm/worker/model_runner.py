@@ -16,7 +16,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.utils import in_wsl
+from vllm.utils import in_wsl, coalesce_blocks
 
 logger = init_logger(__name__)
 
@@ -528,15 +528,13 @@ class ModelRunner:
 
         if to_rank != -1:
             assert seq_group_metadata_list[0].block_tables is not None
-            input_metadata.blocks_to_send = [
-                block
-                for seq_group_metadata in seq_group_metadata_list
-                for blocks in seq_group_metadata.block_tables.values()
-                for block in blocks
-                ]
+            input_metadata.to_send = coalesce_blocks([block
+                                                      for seq_group_metadata in seq_group_metadata_list
+                                                      for blocks in seq_group_metadata.block_tables.values()
+                                                      for block in blocks])
             input_metadata.to_rank = to_rank
         else:
-            input_metadata.blocks_to_send = []
+            input_metadata.to_send = []
             input_metadata.to_rank = -1
 
         return (input_tokens, input_positions, input_metadata,
