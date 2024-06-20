@@ -244,11 +244,18 @@ class _AsyncLLMEngine(LLMEngine):
     async def receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
         assert get_engine_type() == EngineType.DECODING
         reqs = []
-        blocks_to_receive = [block for blocks in seq_group_metadata_list[0].block_tables.values() for block in blocks][:40]
+        blocks_to_receive = [
+            block
+            for seq_group_metadata in seq_group_metadata_list
+            for blocks in seq_group_metadata.block_tables.values()
+            for block in blocks
+            ]
         for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
-            for i in blocks_to_receive:
-                reqs.append(torch.distributed.irecv(key_cache[i], src=0))
-                reqs.append(torch.distributed.irecv(value_cache[i], src=0))
+            for i, block in enumerate(blocks_to_receive):
+                reqs.append(torch.distributed.irecv(key_cache[block], src=0))
+                reqs.append(torch.distributed.irecv(value_cache[block], src=0))
+                if i % 40 == 0:
+                    await asyncio.sleep(0) # to many successive irecv will block the main thread
         return reqs
 
 
