@@ -608,6 +608,8 @@ class LLMEngine:
             for parent_seq in parent_seqs
         }
         for sample in samples:
+            if sample.parent_seq_id not in parent_child_dict:
+                pass
             parent_child_dict[sample.parent_seq_id].append(sample)
         # List of (child, parent)
         child_seqs: List[Tuple[Sequence, Sequence]] = []

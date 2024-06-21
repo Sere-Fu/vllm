@@ -106,6 +106,7 @@ class Scheduler:
         self.running: Deque[SequenceGroup] = deque()
         # Sequence groups in the SWAPPED state.
         self.swapped: Deque[SequenceGroup] = deque()
+        self.remote: Deque[SequenceGroup] = deque()
 
     @property
     def lora_enabled(self) -> bool:
@@ -157,7 +158,240 @@ class Scheduler:
     def get_num_unfinished_seq_groups(self) -> int:
         return len(self.waiting) + len(self.running) + len(self.swapped)
 
-    def _schedule(self) -> SchedulerOutputs:
+    def _schedule(self, schedule_type) -> SchedulerOutputs:
+        if schedule_type == 'prefill':
+            return self._schedule_prefill()
+        elif schedule_type == 'decode':
+            return self._schedule_decode()
+        elif schedule_type == 'mixed':
+            return self._schedule_mixed()
+        else:
+            raise ValueError(f"Invalid schedule type: {schedule_type}")
+
+    def _schedule_prefill(self) -> SchedulerOutputs:
+        # Blocks that need to be swaped or copied before model execution.
+        blocks_to_swap_in: Dict[int, int] = {}
+        blocks_to_swap_out: Dict[int, int] = {}
+        blocks_to_copy: Dict[int, List[int]] = {}
+
+        # Fix the current time.
+        now = time.monotonic()
+
+        # Join waiting sequences if possible.
+        if not self.swapped: # non empty [swapped] means no more [running] is allowed
+            ignored_seq_groups: List[SequenceGroup] = []
+            scheduled: List[SequenceGroup] = []
+            # The total number of sequences on the fly, including the
+            # requests in the generation phase.
+            num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
+                                for seq_group in self.running)
+            curr_loras = set(
+                seq_group.lora_int_id
+                for seq_group in self.running) if self.lora_enabled else None
+            seq_lens: List[int] = []
+
+            # Optimization: We do not sort the waiting queue since the preempted
+            # sequence groups are added to the front and the new sequence groups
+            # are added to the back.
+            leftover_waiting_sequences = deque()
+            while self.waiting:
+                seq_group = self.waiting[0]
+                waiting_seqs = seq_group.get_seqs(
+                    status=SequenceStatus.WAITING)
+                assert len(waiting_seqs) == 1, (
+                    "Waiting sequence group should have only one prompt "
+                    "sequence.")
+                num_prompt_tokens = waiting_seqs[0].get_len() # output token sure to be null?
+                if num_prompt_tokens > self.prompt_limit:
+                    logger.warning(
+                        f"Input prompt ({num_prompt_tokens} tokens) is too long"
+                        f" and exceeds limit of {self.prompt_limit}")
+                    for seq in waiting_seqs:
+                        seq.status = SequenceStatus.FINISHED_IGNORED
+                    ignored_seq_groups.append(seq_group)
+                    self.waiting.popleft()
+                    continue
+
+                # If the sequence group cannot be allocated, stop.
+                can_allocate = self.block_manager.can_allocate(seq_group) # single threaded, no gang scheduling is needed
+                if can_allocate == AllocStatus.LATER:
+                    break
+                elif can_allocate == AllocStatus.NEVER:
+                    logger.warning(
+                        f"Input prompt ({num_prompt_tokens} tokens) is too long"
+                        f" and exceeds the capacity of block_manager")
+                    for seq in waiting_seqs:
+                        seq.status = SequenceStatus.FINISHED_IGNORED
+                    ignored_seq_groups.append(seq_group)
+                    self.waiting.popleft()
+                    continue
+
+                lora_int_id = 0
+                if self.lora_enabled:
+                    lora_int_id = seq_group.lora_int_id
+                    if lora_int_id > 0 and lora_int_id not in curr_loras and len(
+                            curr_loras) >= self.lora_config.max_loras:
+                        # We don't have a space for another LoRA, so
+                        # we ignore this request for now.
+                        leftover_waiting_sequences.appendleft(seq_group)
+                        self.waiting.popleft()
+                        continue
+
+                # If the number of batched tokens exceeds the limit, stop.
+                new_seq_lens = seq_lens + [num_prompt_tokens]
+                num_batched_tokens = len(new_seq_lens) * max(new_seq_lens)
+                if (num_batched_tokens >
+                        self.scheduler_config.max_num_batched_tokens):
+                    break
+
+                # The total number of sequences in the RUNNING state should not
+                # exceed the maximum number of sequences.
+                num_new_seqs = seq_group.get_max_num_running_seqs()
+                if (num_curr_seqs + num_new_seqs >
+                        self.scheduler_config.max_num_seqs):
+                    break
+
+                num_paddings = num_batched_tokens - sum(new_seq_lens)
+                if num_paddings > self.scheduler_config.max_paddings:
+                    break
+                seq_lens = new_seq_lens
+
+                if lora_int_id > 0:
+                    curr_loras.add(lora_int_id)
+                self.waiting.popleft()
+                self._allocate(seq_group)
+                self.remote.append(seq_group)
+                num_curr_seqs += num_new_seqs
+                scheduled.append(seq_group)
+
+            self.waiting.extendleft(leftover_waiting_sequences)
+
+            # todo: donot return here when (scheduled == None, ignored_seq_groups != None)
+            if scheduled or ignored_seq_groups:
+                scheduler_outputs = SchedulerOutputs(
+                    scheduled_seq_groups=scheduled,
+                    prompt_run=True,
+                    num_batched_tokens=len(seq_lens) *
+                    max(seq_lens) if seq_lens else 0,
+                    blocks_to_swap_in=blocks_to_swap_in,
+                    blocks_to_swap_out=blocks_to_swap_out,
+                    blocks_to_copy=blocks_to_copy,
+                    ignored_seq_groups=ignored_seq_groups,
+                )
+                return scheduler_outputs
+
+        return scheduler_outputs(
+            scheduled_seq_groups=[],
+            prompt_run=False,
+            num_batched_tokens=0,
+            blocks_to_swap_in={},
+            blocks_to_swap_out={},
+            blocks_to_copy={},
+            ignored_seq_groups=[],
+        )
+
+    def _schedule_decode(self) -> SchedulerOutputs:
+        # Blocks that need to be swaped or copied before model execution.
+        blocks_to_swap_in: Dict[int, int] = {}
+        blocks_to_swap_out: Dict[int, int] = {}
+        blocks_to_copy: Dict[int, List[int]] = {}
+
+        # Fix the current time.
+        now = time.monotonic()
+
+        # NOTE(woosuk): Preemption happens only when there is no available slot
+        # to keep all the sequence groups in the RUNNING state.
+        # In this case, the policy is responsible for deciding which sequence
+        # groups to preempt.
+        self.running = self.policy.sort_by_priority(now, self.running)
+
+        # Reserve new token slots for the running sequence groups.
+        running: Deque[SequenceGroup] = deque()
+        preempted: List[SequenceGroup] = []
+        while self.running:
+            seq_group = self.running.popleft()
+            while not self.block_manager.can_append_slot(seq_group):
+                if self.running:
+                    # Preempt the lowest-priority sequence groups.
+                    victim_seq_group = self.running.pop()
+                    self._preempt(victim_seq_group, blocks_to_swap_out)
+                    preempted.append(victim_seq_group)
+                else:
+                    # No other sequence groups can be preempted.
+                    # Preempt the current sequence group.
+                    self._preempt(seq_group, blocks_to_swap_out)
+                    preempted.append(seq_group)
+                    break
+            else:
+                # Append new slots to the sequence group.
+                self._append_slot(seq_group, blocks_to_copy)
+                running.append(seq_group)
+        self.running = running
+
+        # Swap in the sequence groups in the SWAPPED state if possible.
+        self.swapped = self.policy.sort_by_priority(now, self.swapped)
+        if not preempted:
+            num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
+                                for seq_group in self.running)
+            curr_loras = set(
+                seq_group.lora_int_id
+                for seq_group in self.running) if self.lora_enabled else None
+
+            leftover_swapped = deque()
+
+            while self.swapped:
+                seq_group = self.swapped[0]
+                lora_int_id = 0
+                if self.lora_enabled:
+                    lora_int_id = seq_group.lora_int_id
+                    if lora_int_id > 0 and lora_int_id not in curr_loras and len(
+                            curr_loras) >= self.lora_config.max_loras:
+                        # We don't have a space for another LoRA, so
+                        # we ignore this request for now.
+                        leftover_swapped.appendleft(seq_group)
+                        self.swapped.popleft()
+                        continue
+
+                # If the sequence group cannot be swapped in, stop.
+                if not self.block_manager.can_swap_in(seq_group):
+                    break
+
+                # The total number of sequences in the RUNNING state should not
+                # exceed the maximum number of sequences.
+                num_new_seqs = seq_group.get_max_num_running_seqs()
+                if (num_curr_seqs + num_new_seqs >
+                        self.scheduler_config.max_num_seqs):
+                    break
+
+                if lora_int_id > 0:
+                    curr_loras.add(lora_int_id)
+                self.swapped.popleft()
+                self._swap_in(seq_group, blocks_to_swap_in)
+                self._append_slot(seq_group, blocks_to_copy)
+                num_curr_seqs += num_new_seqs
+                self.running.append(seq_group)
+
+            self.swapped.extendleft(leftover_swapped)
+
+        # Each sequence in the generation phase only takes one token slot.
+        # Therefore, the number of batched tokens is equal to the number of
+        # sequences in the RUNNING state.
+        num_batched_tokens = sum(
+            seq_group.num_seqs(status=SequenceStatus.RUNNING)
+            for seq_group in self.running)
+
+        scheduler_outputs = SchedulerOutputs(
+            scheduled_seq_groups=self.running,
+            prompt_run=False,
+            num_batched_tokens=num_batched_tokens,
+            blocks_to_swap_in=blocks_to_swap_in,
+            blocks_to_swap_out=blocks_to_swap_out,
+            blocks_to_copy=blocks_to_copy,
+            ignored_seq_groups=[],
+        )
+        return scheduler_outputs
+
+    def _schedule_mixed(self) -> SchedulerOutputs:
         # Blocks that need to be swaped or copied before model execution.
         blocks_to_swap_in: Dict[int, int] = {}
         blocks_to_swap_out: Dict[int, int] = {}
@@ -361,11 +595,11 @@ class Scheduler:
         )
         return scheduler_outputs
 
-    def schedule(self) -> Tuple[List[SequenceGroupMetadata], SchedulerOutputs]:
+    def schedule(self, schedule_type) -> Tuple[List[SequenceGroupMetadata], SchedulerOutputs]:
         # Schedule sequence groups.
         # This function call changes the internal states of the scheduler
         # such as self.running, self.swapped, and self.waiting.
-        scheduler_outputs = self._schedule()
+        scheduler_outputs = self._schedule(schedule_type=schedule_type)
 
         # Create input data structures.
         seq_group_metadata_list: List[SequenceGroupMetadata] = []
