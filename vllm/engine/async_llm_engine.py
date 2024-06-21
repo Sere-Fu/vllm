@@ -224,8 +224,8 @@ class _AsyncLLMEngine(LLMEngine):
         }
 
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
-        task = asyncio.create_task(self.receive_kv_cache(seq_group_metadata_list))
         async with aiohttp.ClientSession(timeout=timeout) as session:
+            task = asyncio.create_task(self.receive_kv_cache(seq_group_metadata_list))
             while True:
                 async with session.post("http://127.0.0.1:8000/prefill",
                                         headers={"User-Agent": "d-worker"},
@@ -257,9 +257,22 @@ class _AsyncLLMEngine(LLMEngine):
         for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
             for i, (start, l) in enumerate(to_receive):
                 reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=0))
-                reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=0))
-                if i % 40 == 0:
+                while True:
                     await asyncio.sleep(0) # to many successive irecv will block the main thread
+                    for req in reqs:
+                        if req.is_completed():
+                            reqs.remove(req)
+                    if not reqs:
+                        break
+                reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=0))
+
+                while True:
+                    await asyncio.sleep(0) # to many successive irecv will block the main thread
+                    for req in reqs:
+                        if req.is_completed():
+                            reqs.remove(req)
+                    if not reqs:
+                        break
         return reqs
 
 
