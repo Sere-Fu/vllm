@@ -495,11 +495,7 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()
         else:
-            if step_type == 'prefill':
-                self._request_tracker.remote_done_event.clear()
             request_outputs = await self.engine.step_async(step_type=step_type)
-            if step_type == 'prefill':
-                self._request_tracker.remote_done_event.set()
 
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
@@ -528,7 +524,9 @@ class AsyncLLMEngine:
         while True:
             if not self.engine.scheduler.waiting:
                 await self._request_tracker.wait_for_new_requests()
+            self._request_tracker.remote_done_event.clear()
             await self.engine_step('prefill')
+            self._request_tracker.remote_done_event.set()
             await asyncio.sleep(0)
 
     async def run_local_engine_loop(self): # for dispatching remote prefill
