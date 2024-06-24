@@ -149,7 +149,7 @@ class RequestTracker:
 
         self._request_streams[request_id].finish()
 
-    def get_new_and_finished_requests(self) -> Tuple[List[Dict], Set[str]]:
+    def get_new_and_finished_requests(self, get_new: bool) -> Tuple[List[Dict], Set[str]]:
         """Get the new requests and finished requests to be
         sent to the engine."""
         new_requests: List[Dict] = []
@@ -160,16 +160,17 @@ class RequestTracker:
             finished_requests.add(request_id)
             self._request_streams.pop(request_id, None)
 
-        while not self._new_requests.empty():
-            stream, new_request = self._new_requests.get_nowait()
-            if stream.request_id in finished_requests:
-                # The request has already been aborted.
-                stream.finish()
-                continue
-            self._request_streams[stream.request_id] = stream
-            new_requests.append(new_request)
+        if get_new:
+            while not self._new_requests.empty():
+                stream, new_request = self._new_requests.get_nowait()
+                if stream.request_id in finished_requests:
+                    # The request has already been aborted.
+                    stream.finish()
+                    continue
+                self._request_streams[stream.request_id] = stream
+                new_requests.append(new_request)
 
-        self.new_requests_event.clear() # drain all requests at once
+            self.new_requests_event.clear() # drain all requests at once
 
         return new_requests, finished_requests
 
@@ -490,8 +491,12 @@ class AsyncLLMEngine:
 
         Returns True if there are in-progress requests."""
 
-        new_requests, finished_requests = (
-            self._request_tracker.get_new_and_finished_requests())
+        if step_type == 'decoding':
+            new_requests, finished_requests = (
+                self._request_tracker.get_new_and_finished_requests(False))
+        else:
+            new_requests, finished_requests = (
+                self._request_tracker.get_new_and_finished_requests(True))
 
         for new_request in new_requests:
             # Add the request into the vLLM engine's waiting queue.
