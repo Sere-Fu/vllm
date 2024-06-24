@@ -229,6 +229,7 @@ class _AsyncLLMEngine(LLMEngine):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             task = asyncio.create_task(self.receive_kv_cache(seq_group_metadata_list))
             while True:
+                logger.info("try post")
                 async with session.post("http://127.0.0.1:8000/prefill",
                                         headers={"User-Agent": "d-worker"},
                                         json=pload) as response:
@@ -265,6 +266,7 @@ class _AsyncLLMEngine(LLMEngine):
                 logger.info(f"irecv inited {start}, {l}")
                 if not received:
                     while not req.is_completed():
+                        logger.info("yield")
                         await asyncio.sleep(0) # to many successive irecv will block the main thread
                     received = True
                 else:
@@ -534,7 +536,7 @@ class AsyncLLMEngine:
         while True:
             if not self.engine.scheduler.waiting:
                 await self._request_tracker.wait_for_new_requests()
-            self._request_tracker.remote_done_event.clear()
+            # self._request_tracker.remote_done_event.clear()
             await self.engine_step('prefill')
             self._request_tracker.remote_done_event.set()
             await asyncio.sleep(0)

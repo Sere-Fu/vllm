@@ -293,7 +293,7 @@ def coalesce_blocks(block_list: List[int]) -> List[Tuple[int, int]]:
     current_block_start = sorted_block_list[0]
     current_block_length = 1
     for i in range(1, len(sorted_block_list)):
-        if sorted_block_list[i] == sorted_block_list[i - 1] + 1:
+        if sorted_block_list[i] == sorted_block_list[i - 1] + 1 and current_block_length < 32:
             current_block_length += 1
         else:
             ret.append((current_block_start, current_block_length))

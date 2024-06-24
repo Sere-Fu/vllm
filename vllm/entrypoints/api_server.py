@@ -10,10 +10,13 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid, unmarshalFromB64String, marshalToB64String
+from vllm.logger import init_logger
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
 engine = None
+
+logger = init_logger(__name__)
 
 
 @app.get("/health")
@@ -79,6 +82,7 @@ async def prefill(request: Request) -> Response:
     - from_rank: the global rank of the client
     - seq_group_metadata_list: the prefill workload itself
     """
+    logger.info("prefill in")
     request_dict = await request.json()
     from_rank = request_dict.pop("from_rank")
     seq_group_metadata_list = unmarshalFromB64String(request_dict.pop("encoded_seq_group_metadata_list"))
