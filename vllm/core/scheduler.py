@@ -280,7 +280,7 @@ class Scheduler:
                 )
                 return scheduler_outputs
 
-        return scheduler_outputs(
+        return SchedulerOutputs(
             scheduled_seq_groups=[],
             prompt_run=False,
             num_batched_tokens=0,
