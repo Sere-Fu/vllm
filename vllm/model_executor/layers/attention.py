@@ -10,6 +10,7 @@ from xformers.ops.fmha.attn_bias import (BlockDiagonalCausalMask,
 from vllm._C import ops
 from vllm._C import cache_ops
 from vllm.model_executor.input_metadata import InputMetadata
+from vllm.logger import init_logger
 from vllm.model_executor.layers.triton_kernel.prefix_prefill import (
     context_attention_fwd)
 from vllm.utils import is_hip
@@ -17,6 +18,8 @@ from vllm.utils import is_hip
 _SUPPORTED_HEAD_SIZES = [64, 80, 96, 112, 128, 256]
 # Should be the same as PARTITION_SIZE in `paged_attention_v2_launcher`.
 _PARTITION_SIZE = 512
+
+logger = init_logger(__name__)
 
 
 class PagedAttention(nn.Module):
@@ -105,6 +108,7 @@ class PagedAttention(nn.Module):
             assert input_metadata.is_prompt
             assert input_metadata.to_send is not None
             for start, l in input_metadata.to_send:
+                logger.info(f"isend {start}, {l}")
                 torch.distributed.isend(key_cache[start: start+l], input_metadata.to_rank)
                 torch.distributed.isend(value_cache[start: start+l], input_metadata.to_rank)
 

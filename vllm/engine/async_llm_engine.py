@@ -192,11 +192,13 @@ class _AsyncLLMEngine(LLMEngine):
         and updates the scheduler with the model outputs. Finally, it decodes
         the sequences and returns the newly generated results.
         """
+        logger.info(f"start step_async: {step_type}")
         seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule(schedule_type=step_type)
 
         if not scheduler_outputs.is_empty():
             if scheduler_outputs.prompt_run and get_engine_type() == EngineType.DECODING:
                 output = await self.prefill_remote(seq_group_metadata_list)
+                logger.info(f"remote prefill done")
                 self.scheduler.running.extend(self.scheduler.remote)
                 self.scheduler.remote.clear()
             else:
@@ -249,30 +251,25 @@ class _AsyncLLMEngine(LLMEngine):
 
     async def receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
         assert get_engine_type() == EngineType.DECODING
-        reqs = []
+        received = False
         to_receive = coalesce_blocks([block
                                       for seq_group_metadata in seq_group_metadata_list
                                       for blocks in seq_group_metadata.block_tables.values()
                                       for block in blocks ])
-        for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
-            for i, (start, l) in enumerate(to_receive):
-                reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=0))
-                while True:
-                    await asyncio.sleep(0) # to many successive irecv will block the main thread
-                    for req in reqs:
-                        if req.is_completed():
-                            reqs.remove(req)
-                    if not reqs:
-                        break
-                reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=0))
 
-                while True:
-                    await asyncio.sleep(0) # to many successive irecv will block the main thread
-                    for req in reqs:
-                        if req.is_completed():
-                            reqs.remove(req)
-                    if not reqs:
-                        break
+        reqs = []
+        for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
+            for (start, l) in to_receive:
+                logger.info(f"irecv {start}, {l}")
+                req = torch.distributed.irecv(key_cache[start: start+l], src=0)
+                logger.info(f"irecv inited {start}, {l}")
+                if not received:
+                    while not req.is_completed():
+                        await asyncio.sleep(0) # to many successive irecv will block the main thread
+                    received = True
+                else:
+                    reqs.append(req)
+                reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=0))
         return reqs
 
 
