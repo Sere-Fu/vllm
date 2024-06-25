@@ -47,7 +47,7 @@ def sample_requests(
                 data["conversations"][1]["value"]) for data in dataset]
 
     # Tokenize the prompts and completions.
-    prompts = [prompt for prompt, _ in dataset]
+    prompts = [prompt * 2 for prompt, _ in dataset]
     prompt_token_ids = tokenizer(prompts).input_ids
     completions = [completion for _, completion in dataset]
     completion_token_ids = tokenizer(completions).input_ids
