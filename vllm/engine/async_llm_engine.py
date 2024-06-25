@@ -86,13 +86,14 @@ class RequestTracker:
                                                 dict]] = asyncio.Queue()
         self.new_requests_event = None
         self.remote_done_event = None
+        self.new_running_event = None
 
     def __contains__(self, item):
         return item in self._request_streams
 
     def init_event(self):
         self.new_requests_event = asyncio.Event()
-        self.remote_done_event = asyncio.Event()
+        self.new_running_event = asyncio.Event()
 
     def propagate_exception(self,
                             exc: Exception,
@@ -177,8 +178,8 @@ class RequestTracker:
     async def wait_for_new_requests(self):
         await self.new_requests_event.wait()
 
-    async def wait_for_remote_done(self):
-        await self.remote_done_event.wait()
+    async def wait_for_new_running(self):
+        await self.new_running_event.wait()
 
 class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
@@ -247,7 +248,7 @@ class _AsyncLLMEngine(LLMEngine):
         reqs = await asyncio.gather(task)
         for req in reqs[0]:
             while not req.is_completed():
-                pass
+                await asyncio.sleep(0)
 
         return unmarshalFromB64String(output['encoded_output'])
 
@@ -543,7 +544,7 @@ class AsyncLLMEngine:
                 await self._request_tracker.wait_for_new_requests()
             # self._request_tracker.remote_done_event.clear()
             await self.engine_step('prefill')
-            self._request_tracker.remote_done_event.set()
+            self._request_tracker.new_running_event.set()
             await asyncio.sleep(0)
 
     async def run_local_engine_loop(self): # for dispatching remote prefill
@@ -551,8 +552,8 @@ class AsyncLLMEngine:
         has_requests_in_progress = False
         while True:
             if not has_requests_in_progress:
-                await self._request_tracker.wait_for_remote_done()
-                self._request_tracker.remote_done_event.clear()
+                await self._request_tracker.wait_for_new_running()
+                self._request_tracker.new_running_event.clear()
             has_requests_in_progress = await self.engine_step('decode')
             await asyncio.sleep(0)
 

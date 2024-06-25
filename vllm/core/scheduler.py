@@ -169,15 +169,8 @@ class Scheduler:
             raise ValueError(f"Invalid schedule type: {schedule_type}")
 
     def _schedule_prefill(self) -> SchedulerOutputs:
-        # Blocks that need to be swaped or copied before model execution.
-        blocks_to_swap_in: Dict[int, int] = {}
-        blocks_to_swap_out: Dict[int, int] = {}
-        blocks_to_copy: Dict[int, List[int]] = {}
-
-        # Fix the current time.
-        now = time.monotonic()
-
         # Join waiting sequences if possible.
+        assert not self.remote # prefill is serialized
         if not self.swapped: # non empty [swapped] means no more [running] is allowed
             ignored_seq_groups: List[SequenceGroup] = []
             scheduled: List[SequenceGroup] = []
@@ -260,6 +253,8 @@ class Scheduler:
                     curr_loras.add(lora_int_id)
                 self.waiting.popleft()
                 self._allocate(seq_group)
+                # everything is the same as mix, except to remote, not running
+                # seq.status = SequenceStatus.RUNNING though
                 self.remote.append(seq_group)
                 num_curr_seqs += num_new_seqs
                 scheduled.append(seq_group)
@@ -273,9 +268,9 @@ class Scheduler:
                     prompt_run=True,
                     num_batched_tokens=len(seq_lens) *
                     max(seq_lens) if seq_lens else 0,
-                    blocks_to_swap_in=blocks_to_swap_in,
-                    blocks_to_swap_out=blocks_to_swap_out,
-                    blocks_to_copy=blocks_to_copy,
+                    blocks_to_swap_in={},
+                    blocks_to_swap_out={},
+                    blocks_to_copy={},
                     ignored_seq_groups=ignored_seq_groups,
                 )
                 return scheduler_outputs
