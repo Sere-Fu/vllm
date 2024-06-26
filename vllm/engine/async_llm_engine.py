@@ -199,7 +199,7 @@ class _AsyncLLMEngine(LLMEngine):
         if not scheduler_outputs.is_empty():
             if scheduler_outputs.prompt_run and get_engine_type() == EngineType.DECODING:
                 output = await self.prefill_remote(seq_group_metadata_list)
-                self.scheduler.running.extend(self.scheduler.remote)
+                self.scheduler.remote_done.extend(self.scheduler.remote)
                 self.scheduler.remote.clear()
             else:
             # Execute the model.
@@ -538,7 +538,7 @@ class AsyncLLMEngine:
             if not (self.engine.scheduler.waiting and has_requests_in_progress):
                 await self._request_tracker.wait_for_new_requests()
             has_requests_in_progress = await self.engine_step('prefill')
-            if not has_requests_in_progress: # start decoding when max running
+            if len(self.engine.scheduler.remote_done) > self.engine.scheduler_config.max_num_seqs: # start decoding when max running
                 self._request_tracker.new_running_event.set()
             await asyncio.sleep(0)
 

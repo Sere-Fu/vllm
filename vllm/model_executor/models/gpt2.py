@@ -20,6 +20,7 @@
 from typing import List, Optional, Tuple
 
 import torch
+import time
 from torch import nn
 from transformers import GPT2Config
 
@@ -227,6 +228,7 @@ class GPT2LMHeadModel(nn.Module):
         kv_caches: List[KVCache],
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
+        time.sleep(0.1)
         hidden_states = self.transformer(input_ids, positions, kv_caches,
                                          input_metadata)
         return hidden_states

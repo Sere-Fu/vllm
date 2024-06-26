@@ -107,6 +107,7 @@ class Scheduler:
         # Sequence groups in the SWAPPED state.
         self.swapped: Deque[SequenceGroup] = deque()
         self.remote: Deque[SequenceGroup] = deque()
+        self.remote_done: Deque[SequenceGroup] = deque()
 
     @property
     def lora_enabled(self) -> bool:
@@ -174,10 +175,6 @@ class Scheduler:
         if not self.swapped: # non empty [swapped] means no more [running] is allowed
             ignored_seq_groups: List[SequenceGroup] = []
             scheduled: List[SequenceGroup] = []
-            # The total number of sequences on the fly, including the
-            # requests in the generation phase.
-            num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
-                                for seq_group in self.running)
             curr_loras = set(
                 seq_group.lora_int_id
                 for seq_group in self.running) if self.lora_enabled else None
@@ -237,13 +234,6 @@ class Scheduler:
                         self.scheduler_config.max_num_batched_tokens):
                     break
 
-                # The total number of sequences in the RUNNING state should not
-                # exceed the maximum number of sequences.
-                num_new_seqs = seq_group.get_max_num_running_seqs()
-                if (num_curr_seqs + num_new_seqs >
-                        self.scheduler_config.max_num_seqs):
-                    break
-
                 num_paddings = num_batched_tokens - sum(new_seq_lens)
                 if num_paddings > self.scheduler_config.max_paddings:
                     break
@@ -256,7 +246,6 @@ class Scheduler:
                 # everything is the same as mix, except to remote, not running
                 # seq.status = SequenceStatus.RUNNING though
                 self.remote.append(seq_group)
-                num_curr_seqs += num_new_seqs
                 scheduled.append(seq_group)
 
             self.waiting.extendleft(leftover_waiting_sequences)
@@ -286,6 +275,34 @@ class Scheduler:
         )
 
     def _schedule_decode(self) -> SchedulerOutputs:
+        # The total number of sequences on the fly, including the
+        # requests in the generation phase.
+        num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
+                            for seq_group in self.running)
+
+        while self.remote_done:
+            seq_group = self.remote_done[0]
+            num_new_seqs = seq_group.get_max_num_running_seqs()
+            if (num_curr_seqs + num_new_seqs >
+                    self.scheduler_config.max_num_seqs):
+                break
+            self.running.append(seq_group)
+            self.remote_done.popleft()
+
+            num_curr_seqs += num_new_seqs
+
+
+        if self.waiting or self.remote or self.remote_done:
+            if num_curr_seqs < self.scheduler_config.max_num_seqs:
+                return SchedulerOutputs(
+                    scheduled_seq_groups=[],
+                    prompt_run=False,
+                    num_batched_tokens=0,
+                    blocks_to_swap_in={},
+                    blocks_to_swap_out={},
+                    blocks_to_copy={},
+                    ignored_seq_groups=[],
+                )
         # Blocks that need to be swaped or copied before model execution.
         blocks_to_swap_in: Dict[int, int] = {}
         blocks_to_swap_out: Dict[int, int] = {}
