@@ -82,7 +82,6 @@ async def prefill(request: Request) -> Response:
     - from_rank: the global rank of the client
     - seq_group_metadata_list: the prefill workload itself
     """
-    logger.info("prefill in")
     request_dict = await request.json()
     from_rank = request_dict.pop("from_rank")
     seq_group_metadata_list = unmarshalFromB64String(request_dict.pop("encoded_seq_group_metadata_list"))

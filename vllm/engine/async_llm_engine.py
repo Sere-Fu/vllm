@@ -85,7 +85,6 @@ class RequestTracker:
         self._new_requests: asyncio.Queue[Tuple[AsyncStream,
                                                 dict]] = asyncio.Queue()
         self.new_requests_event = None
-        self.remote_done_event = None
         self.new_running_event = None
 
     def __contains__(self, item):
@@ -194,13 +193,12 @@ class _AsyncLLMEngine(LLMEngine):
         and updates the scheduler with the model outputs. Finally, it decodes
         the sequences and returns the newly generated results.
         """
-        logger.info(f"start step_async: {step_type}")
         seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule(schedule_type=step_type)
+        logger.info(f"scheduled seq groups: {step_type}, {len(seq_group_metadata_list)}")
 
         if not scheduler_outputs.is_empty():
             if scheduler_outputs.prompt_run and get_engine_type() == EngineType.DECODING:
                 output = await self.prefill_remote(seq_group_metadata_list)
-                logger.info(f"remote prefill done")
                 self.scheduler.running.extend(self.scheduler.remote)
                 self.scheduler.remote.clear()
             else:
@@ -231,7 +229,6 @@ class _AsyncLLMEngine(LLMEngine):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             task = asyncio.create_task(self.receive_kv_cache(seq_group_metadata_list))
             while True:
-                logger.info("try post")
                 async with session.post("http://127.0.0.1:8000/prefill",
                                         headers={"User-Agent": "d-worker"},
                                         json=pload) as response:
@@ -263,12 +260,9 @@ class _AsyncLLMEngine(LLMEngine):
         reqs = []
         for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
             for (start, l) in to_receive:
-                logger.info(f"irecv {start}, {l}")
                 req = torch.distributed.irecv(key_cache[start: start+l], src=0)
-                logger.info(f"irecv inited {start}, {l}")
                 if not received:
                     while not req.is_completed():
-                        logger.info("yield")
                         await asyncio.sleep(0) # to many successive irecv will block the main thread
                     received = True
                 else:
@@ -539,12 +533,13 @@ class AsyncLLMEngine:
 
     async def run_remote_engine_loop(self): # for dispatching remote prefill
         # Initialize the RequestTracker here so it uses the right event loop.
+        has_requests_in_progress = False
         while True:
-            if not self.engine.scheduler.waiting:
+            if not (self.engine.scheduler.waiting and has_requests_in_progress):
                 await self._request_tracker.wait_for_new_requests()
-            # self._request_tracker.remote_done_event.clear()
-            await self.engine_step('prefill')
-            self._request_tracker.new_running_event.set()
+            has_requests_in_progress = await self.engine_step('prefill')
+            if has_requests_in_progress:
+                self._request_tracker.new_running_event.set()
             await asyncio.sleep(0)
 
     async def run_local_engine_loop(self): # for dispatching remote prefill
@@ -555,6 +550,8 @@ class AsyncLLMEngine:
                 await self._request_tracker.wait_for_new_running()
                 self._request_tracker.new_running_event.clear()
             has_requests_in_progress = await self.engine_step('decode')
+            if has_requests_in_progress:
+                self._request_tracker.new_requests_event.set()
             await asyncio.sleep(0)
 
     async def add_request(
