@@ -2,6 +2,7 @@ from collections import deque
 import enum
 import time
 from typing import Deque, Dict, Iterable, List, Optional, Tuple, Union, Set
+import torch
 
 from vllm.config import CacheConfig, LoRAConfig, SchedulerConfig
 from vllm.core.block_manager import AllocStatus, BlockSpaceManager
@@ -106,8 +107,9 @@ class Scheduler:
         self.running: Deque[SequenceGroup] = deque()
         # Sequence groups in the SWAPPED state.
         self.swapped: Deque[SequenceGroup] = deque()
-        self.remote: Deque[SequenceGroup] = deque()
-        self.remote_done: Deque[SequenceGroup] = deque()
+        # associated futures
+        self.remote: Deque[Tuple[List[SequenceGroup], List[torch.distributed.Work]]] = deque()
+        self.pre_running: Deque[SequenceGroup] = deque()
 
     @property
     def lora_enabled(self) -> bool:
@@ -245,7 +247,6 @@ class Scheduler:
                 self._allocate(seq_group)
                 # everything is the same as mix, except to remote, not running
                 # seq.status = SequenceStatus.RUNNING though
-                self.remote.append(seq_group)
                 scheduled.append(seq_group)
 
             self.waiting.extendleft(leftover_waiting_sequences)
@@ -262,6 +263,8 @@ class Scheduler:
                     blocks_to_copy={},
                     ignored_seq_groups=ignored_seq_groups,
                 )
+                if scheduled:
+                    self.remote.append((scheduled, []))
                 return scheduler_outputs
 
         return SchedulerOutputs(
@@ -280,19 +283,19 @@ class Scheduler:
         num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
                             for seq_group in self.running)
 
-        while self.remote_done:
-            seq_group = self.remote_done[0]
+        while self.pre_running:
+            seq_group = self.pre_running[0]
             num_new_seqs = seq_group.get_max_num_running_seqs()
             if (num_curr_seqs + num_new_seqs >
                     self.scheduler_config.max_num_seqs):
                 break
             self.running.append(seq_group)
-            self.remote_done.popleft()
+            self.pre_running.popleft()
 
             num_curr_seqs += num_new_seqs
 
 
-        if self.waiting or self.remote or self.remote_done:
+        if self.waiting or self.remote or self.pre_running:
             if num_curr_seqs < self.scheduler_config.max_num_seqs:
                 return SchedulerOutputs(
                     scheduled_seq_groups=[],
