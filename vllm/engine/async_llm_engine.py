@@ -550,7 +550,7 @@ class AsyncLLMEngine:
                 await self._request_tracker.wait_for_new_running()
                 self._request_tracker.new_running_event.clear()
             has_requests_in_progress = await self.engine_step('decode')
-            if has_requests_in_progress:
+            if has_requests_in_progress and self.engine.scheduler.waiting:
                 self._request_tracker.new_requests_event.set()
             await asyncio.sleep(0)
 
