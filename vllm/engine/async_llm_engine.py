@@ -538,7 +538,7 @@ class AsyncLLMEngine:
             if not (self.engine.scheduler.waiting and has_requests_in_progress):
                 await self._request_tracker.wait_for_new_requests()
             has_requests_in_progress = await self.engine_step('prefill')
-            if has_requests_in_progress:
+            if not has_requests_in_progress: # start decoding when max running
                 self._request_tracker.new_running_event.set()
             await asyncio.sleep(0)
 
