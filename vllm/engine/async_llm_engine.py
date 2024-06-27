@@ -199,7 +199,7 @@ class _AsyncLLMEngine(LLMEngine):
 
         if not remote_scheduler_outputs.is_empty():
             assert remote_scheduler_outputs.prompt_run and get_engine_type() == EngineType.DECODING
-            self.scheduler.receive_kv_task = asyncio.create_task(self.receive_kv_cache(remote_seq_group_metadata_list))
+            self.scheduler.receive_kv_task = asyncio.get_event_loop().run_in_executor(None, partial(self.receive_kv_cache, remote_seq_group_metadata_list))
             self.scheduler.prefill_remote_task = asyncio.create_task(self.prefill_remote(remote_seq_group_metadata_list))
             self.scheduler.remote_scheduler_outputs = remote_scheduler_outputs
 
@@ -249,9 +249,8 @@ class _AsyncLLMEngine(LLMEngine):
 
 
 
-    async def receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
+    def receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
         assert get_engine_type() == EngineType.DECODING
-        received = False
         to_receive = coalesce_blocks([block
                                       for seq_group_metadata in seq_group_metadata_list
                                       for blocks in seq_group_metadata.block_tables.values()
@@ -260,13 +259,7 @@ class _AsyncLLMEngine(LLMEngine):
         reqs = []
         for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
             for (start, l) in to_receive:
-                req = torch.distributed.irecv(key_cache[start: start+l], src=0)
-                if not received:
-                    while not req.is_completed():
-                        await asyncio.sleep(0) # to many successive irecv will block the main thread
-                    received = True
-                else:
-                    reqs.append(req)
+                reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=0))
                 reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=0))
         return reqs
 
@@ -534,30 +527,6 @@ class AsyncLLMEngine:
                 should_step_immediately = await self.engine_step(enhanced=False)
 
             await asyncio.sleep(0)
-
-    # async def run_remote_engine_loop(self): # for dispatching remote prefill
-    #     # Initialize the RequestTracker here so it uses the right event loop.
-    #     has_requests_in_progress = False
-    #     while True:
-    #         # if not (self.engine.scheduler.waiting and has_requests_in_progress):
-    #         if not self.engine.scheduler.waiting:
-    #             await self._request_tracker.wait_for_new_requests()
-    #         has_requests_in_progress = await self.engine_step('prefill')
-    #         if len(self.engine.scheduler.pre_running) > self.engine.scheduler_config.max_num_seqs: # start decoding when max running
-    #             self._request_tracker.new_running_event.set()
-    #         await asyncio.sleep(0)
-
-    # async def run_local_engine_loop(self): # for dispatching remote prefill
-    #     # Initialize the RequestTracker here so it uses the right event loop.
-    #     has_requests_in_progress = False
-    #     while True:
-    #         if not has_requests_in_progress:
-    #             await self._request_tracker.wait_for_new_running()
-    #             self._request_tracker.new_running_event.clear()
-    #         has_requests_in_progress = await self.engine_step('decode')
-    #         if has_requests_in_progress and self.engine.scheduler.waiting:
-    #             self._request_tracker.new_requests_event.set()
-    #         await asyncio.sleep(0)
 
     async def add_request(
         self,
