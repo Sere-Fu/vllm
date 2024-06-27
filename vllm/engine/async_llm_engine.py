@@ -182,6 +182,9 @@ class RequestTracker:
 
 class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
+    def __init__(self, wrapper, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.wrapper = wrapper
 
     async def step_async(self, enhanced) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
@@ -201,7 +204,10 @@ class _AsyncLLMEngine(LLMEngine):
             assert remote_scheduler_outputs.prompt_run and get_engine_type() == EngineType.DECODING
             self.scheduler.receive_kv_task = asyncio.get_event_loop().run_in_executor(None, partial(self.receive_kv_cache, remote_seq_group_metadata_list))
             self.scheduler.prefill_remote_task = asyncio.create_task(self.prefill_remote(remote_seq_group_metadata_list))
+            self.scheduler.prefill_remote_task.add_done_callback(self.wrapper.handle_ongoing_remote_prefill)
             self.scheduler.remote_scheduler_outputs = remote_scheduler_outputs
+
+            self.wrapper.has_on_going_remote = True
 
         if not local_scheduler_outputs.is_empty():
         # Execute the model.
@@ -400,7 +406,7 @@ class AsyncLLMEngine:
         self.engine_use_ray = engine_use_ray
         self.log_requests = log_requests
         self.max_log_len = max_log_len
-        self.engine = self._init_engine(*args, **kwargs)
+        self.engine = self._init_engine(self, *args, **kwargs)
 
         self.background_loop = None
         # We need to keep a reference to unshielded
@@ -471,8 +477,6 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()
         else:
-            if enhanced:
-                remote_finished = await self.handle_ongoing_remote_prefill()
             request_outputs = await self.engine.step_async(enhanced)
 
         # Put the outputs into the corresponding streams.
@@ -481,33 +485,32 @@ class AsyncLLMEngine:
                 request_output, verbose=self.log_requests)
 
         if enhanced:
-            return len(request_outputs) > 0 or remote_finished
+            return len(request_outputs) > 0 or not self.has_on_going_remote
         else:
             return len(request_outputs) > 0
 
     # remote prfill finished or not
-    async def handle_ongoing_remote_prefill(self) -> bool:
-        if self.engine.scheduler.prefill_remote_task and self.engine.scheduler.prefill_remote_task.done():
-                remote_output = await asyncio.gather(self.engine.scheduler.prefill_remote_task)
-                request_outputs = self.engine._process_model_outputs(remote_output[0], self.engine.scheduler.remote_scheduler_outputs)
-                for request_output in request_outputs:
-                    self._request_tracker.process_request_output(
-                        request_output, verbose=self.log_requests)
+    def handle_ongoing_remote_prefill(self, task: asyncio.Task):
+        remote_output = task.result()
+        request_outputs = self.engine._process_model_outputs(remote_output, self.engine.scheduler.remote_scheduler_outputs)
+        for request_output in request_outputs:
+            self._request_tracker.process_request_output(
+                request_output, verbose=self.log_requests)
 
-                irecv_reqs = await asyncio.gather(self.engine.scheduler.receive_kv_task)
-                for req in irecv_reqs[0]:
-                    while not req.is_completed():
-                        await asyncio.sleep(0)
+        while not self.engine.scheduler.receive_kv_task.done():
+            pass
+        irecv_reqs = self.engine.scheduler.receive_kv_task.result()
+        for req in irecv_reqs:
+            req.wait()
 
-                self.engine.scheduler.pre_running.extend(self.engine.scheduler.remote)
-                self.engine.scheduler.remote.clear()
+        self.engine.scheduler.pre_running.extend(self.engine.scheduler.remote)
+        self.engine.scheduler.remote.clear()
 
-                self.engine.scheduler.prefill_remote_task= None
-                self.engine.scheduler.receive_kv_task = None
-                self.engine.scheduler.remote_scheduler_outputs= None
-                return True
-        else:
-            return False
+        self.engine.scheduler.prefill_remote_task= None
+        self.engine.scheduler.receive_kv_task = None
+        self.engine.scheduler.remote_scheduler_outputs= None
+
+        self.has_on_going_remote = False
 
     async def _engine_abort(self, request_ids: Iterable[str]):
         if self.engine_use_ray:
