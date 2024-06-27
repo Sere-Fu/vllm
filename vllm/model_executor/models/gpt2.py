@@ -228,7 +228,7 @@ class GPT2LMHeadModel(nn.Module):
         kv_caches: List[KVCache],
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
-        time.sleep(0.1)
+        time.sleep(0.2)
         hidden_states = self.transformer(input_ids, positions, kv_caches,
                                          input_metadata)
         return hidden_states

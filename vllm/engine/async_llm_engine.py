@@ -183,7 +183,7 @@ class RequestTracker:
 class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
 
-    async def step_async(self, step_type) -> List[RequestOutput]:
+    async def step_async(self, enhanced) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
         The workers are ran asynchronously if possible.
 
@@ -193,41 +193,44 @@ class _AsyncLLMEngine(LLMEngine):
         and updates the scheduler with the model outputs. Finally, it decodes
         the sequences and returns the newly generated results.
         """
-        seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule(schedule_type=step_type)
-        logger.info(f"scheduled seq groups: {step_type}, {len(seq_group_metadata_list)}")
+        remote_seq_group_metadata_list, remote_scheduler_outputs \
+            , local_seq_group_metadata_list, local_scheduler_outputs = self.scheduler.schedule(enhanced)
+        logger.info(f"scheduled {'enhanced' if enhanced else 'normal'}, remote prefill: {len(remote_seq_group_metadata_list)}, local {'prefill' if local_scheduler_outputs.prompt_run else 'decode'}, {len(local_seq_group_metadata_list)}")
 
-        if not scheduler_outputs.is_empty():
-            if scheduler_outputs.prompt_run and get_engine_type() == EngineType.DECODING:
-                output = await self.prefill_remote(seq_group_metadata_list)
-                self.scheduler.pre_running.extend(self.scheduler.remote[0][0])
-                self.scheduler.remote.clear()
-            else:
-            # Execute the model.
-                all_outputs = await self._run_workers_async(
-                    "execute_model",
-                    driver_kwargs={
-                        "seq_group_metadata_list": seq_group_metadata_list,
-                        "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
-                        "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
-                        "blocks_to_copy": scheduler_outputs.blocks_to_copy,
-                    })
+        if not remote_scheduler_outputs.is_empty():
+            assert remote_scheduler_outputs.prompt_run and get_engine_type() == EngineType.DECODING
+            self.scheduler.receive_kv_task = asyncio.create_task(self.receive_kv_cache(remote_seq_group_metadata_list))
+            self.scheduler.prefill_remote_task = asyncio.create_task(self.prefill_remote(remote_seq_group_metadata_list))
+            self.scheduler.remote_scheduler_outputs = remote_scheduler_outputs
 
-                # Only the driver worker returns the sampling results.
-                output = all_outputs[0]
+        if not local_scheduler_outputs.is_empty():
+        # Execute the model.
+            all_outputs = await self._run_workers_async(
+                "execute_model",
+                driver_kwargs={
+                    "seq_group_metadata_list": local_seq_group_metadata_list,
+                    "blocks_to_swap_in": local_scheduler_outputs.blocks_to_swap_in,
+                    "blocks_to_swap_out": local_scheduler_outputs.blocks_to_swap_out,
+                    "blocks_to_copy": local_scheduler_outputs.blocks_to_copy,
+                })
+
+            # Only the driver worker returns the sampling results.
+            output = all_outputs[0]
         else:
             output = []
 
-        return self._process_model_outputs(output, scheduler_outputs)
+        return self._process_model_outputs(output, local_scheduler_outputs)
 
-    async def prefill_remote(self, seq_group_metadata_list: List[SequenceGroupMetadata]) -> List[SequenceGroupOutput]:
+
+    async def prefill_remote(self, seq_group_metadata_list: List[SequenceGroupMetadata]) -> Any:
         pload = {
             "encoded_seq_group_metadata_list": marshalToB64String(seq_group_metadata_list),
             "from_rank": torch.distributed.get_rank(),
         }
 
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
+
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            task = asyncio.create_task(self.receive_kv_cache(seq_group_metadata_list))
             while True:
                 async with session.post("http://127.0.0.1:8000/prefill",
                                         headers={"User-Agent": "d-worker"},
@@ -242,12 +245,9 @@ class _AsyncLLMEngine(LLMEngine):
                 if "error" not in output:
                     break
 
-        reqs = await asyncio.gather(task)
-        for req in reqs[0]:
-            while not req.is_completed():
-                await asyncio.sleep(0)
-
         return unmarshalFromB64String(output['encoded_output'])
+
+
 
     async def receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
         assert get_engine_type() == EngineType.DECODING
@@ -410,27 +410,17 @@ class AsyncLLMEngine:
         self.engine = self._init_engine(*args, **kwargs)
 
         self.background_loop = None
-        self.remote_background_loop = None
-        self.local_backgroud_loop = None
         # We need to keep a reference to unshielded
         # task as well to prevent it from being garbage
         # collected
         self._background_loop_unshielded = None
-        self._remote_background_loop_unshielded = None
-        self._local_background_loop_unshielded = None
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
 
     @property
     def is_running(self) -> bool:
-        if get_engine_type() == EngineType.DECODING:
-            return (self.remote_background_loop is not None
-                    and not self.remote_background_loop.done()
-                    and self.local_background_loop is not None
-                    and not self.local_background_loop.done())
-        else:
-            return (self.background_loop is not None
-                    and not self.background_loop.done())
+        return (self.background_loop is not None
+                and not self.background_loop.done())
 
 
     def start_background_loop(self) -> None:
@@ -439,27 +429,12 @@ class AsyncLLMEngine:
             raise RuntimeError("Background loop is already running.")
         self._request_tracker.init_event()
 
-        if get_engine_type() == EngineType.DECODING:
-            self._remote_background_loop_unshielded = asyncio.get_event_loop(
-            ).create_task(self.run_remote_engine_loop())
-            self._remote_background_loop_unshielded.add_done_callback(
-                partial(_raise_exception_on_finish,
-                        request_tracker=self._request_tracker))
-            self.remote_background_loop = asyncio.shield(self._remote_background_loop_unshielded)
-
-            self._local_background_loop_unshielded = asyncio.get_event_loop(
-            ).create_task(self.run_local_engine_loop())
-            self._local_background_loop_unshielded.add_done_callback(
-                partial(_raise_exception_on_finish,
-                        request_tracker=self._request_tracker))
-            self.local_background_loop = asyncio.shield(self._local_background_loop_unshielded)
-        else:
-            self._background_loop_unshielded = asyncio.get_event_loop(
-            ).create_task(self.run_engine_loop())
-            self._background_loop_unshielded.add_done_callback(
-                partial(_raise_exception_on_finish,
-                        request_tracker=self._request_tracker))
-            self.background_loop = asyncio.shield(self._background_loop_unshielded)
+        self._background_loop_unshielded = asyncio.get_event_loop(
+        ).create_task(self.run_engine_loop())
+        self._background_loop_unshielded.add_done_callback(
+            partial(_raise_exception_on_finish,
+                    request_tracker=self._request_tracker))
+        self.background_loop = asyncio.shield(self._background_loop_unshielded)
 
 
     def _init_engine(self, *args,
@@ -481,17 +456,13 @@ class AsyncLLMEngine:
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
 
-    async def engine_step(self, step_type='mixed') -> bool:
+    async def engine_step(self, enhanced) -> bool:
         """Kick the engine to process the waiting requests.
 
         Returns True if there are in-progress requests."""
 
-        if step_type == 'decoding':
-            new_requests, finished_requests = (
-                self._request_tracker.get_new_and_finished_requests(False))
-        else:
-            new_requests, finished_requests = (
-                self._request_tracker.get_new_and_finished_requests(True))
+        new_requests, finished_requests = (
+            self._request_tracker.get_new_and_finished_requests(True))
 
         for new_request in new_requests:
             # Add the request into the vLLM engine's waiting queue.
@@ -507,14 +478,43 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()
         else:
-            request_outputs = await self.engine.step_async(step_type=step_type)
+            if enhanced:
+                remote_finished = await self.handle_ongoing_remote_prefill()
+            request_outputs = await self.engine.step_async(enhanced)
 
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
             self._request_tracker.process_request_output(
                 request_output, verbose=self.log_requests)
 
-        return len(request_outputs) > 0
+        if enhanced:
+            return len(request_outputs) > 0 or remote_finished
+        else:
+            return len(request_outputs) > 0
+
+    # remote prfill finished or not
+    async def handle_ongoing_remote_prefill(self) -> bool:
+        if self.engine.scheduler.prefill_remote_task and self.engine.scheduler.prefill_remote_task.done():
+                remote_output = await asyncio.gather(self.engine.scheduler.prefill_remote_task)
+                request_outputs = self.engine._process_model_outputs(remote_output[0], self.engine.scheduler.remote_scheduler_outputs)
+                for request_output in request_outputs:
+                    self._request_tracker.process_request_output(
+                        request_output, verbose=self.log_requests)
+
+                irecv_reqs = await asyncio.gather(self.engine.scheduler.receive_kv_task)
+                for req in irecv_reqs[0]:
+                    while not req.is_completed():
+                        await asyncio.sleep(0)
+
+                self.engine.scheduler.pre_running.extend(self.engine.scheduler.remote)
+                self.engine.scheduler.remote.clear()
+
+                self.engine.scheduler.prefill_remote_task= None
+                self.engine.scheduler.receive_kv_task = None
+                self.engine.scheduler.remote_scheduler_outputs= None
+                return True
+        else:
+            return False
 
     async def _engine_abort(self, request_ids: Iterable[str]):
         if self.engine_use_ray:
@@ -524,35 +524,40 @@ class AsyncLLMEngine:
 
     async def run_engine_loop(self): # for dispatching local decoding
         # Initialize the RequestTracker here so it uses the right event loop.
-        has_requests_in_progress = False
+        should_step_immediately = False
         while True:
-            if not has_requests_in_progress:
+            if not should_step_immediately:
                 await self._request_tracker.wait_for_new_requests()
-            has_requests_in_progress = await self.engine_step('mixed')
+            if get_engine_type() == EngineType.DECODING:
+                should_step_immediately = await self.engine_step(enhanced=True)
+            else:
+                should_step_immediately = await self.engine_step(enhanced=False)
+
             await asyncio.sleep(0)
 
-    async def run_remote_engine_loop(self): # for dispatching remote prefill
-        # Initialize the RequestTracker here so it uses the right event loop.
-        has_requests_in_progress = False
-        while True:
-            if not (self.engine.scheduler.waiting and has_requests_in_progress):
-                await self._request_tracker.wait_for_new_requests()
-            has_requests_in_progress = await self.engine_step('prefill')
-            if len(self.engine.scheduler.pre_running) > self.engine.scheduler_config.max_num_seqs: # start decoding when max running
-                self._request_tracker.new_running_event.set()
-            await asyncio.sleep(0)
+    # async def run_remote_engine_loop(self): # for dispatching remote prefill
+    #     # Initialize the RequestTracker here so it uses the right event loop.
+    #     has_requests_in_progress = False
+    #     while True:
+    #         # if not (self.engine.scheduler.waiting and has_requests_in_progress):
+    #         if not self.engine.scheduler.waiting:
+    #             await self._request_tracker.wait_for_new_requests()
+    #         has_requests_in_progress = await self.engine_step('prefill')
+    #         if len(self.engine.scheduler.pre_running) > self.engine.scheduler_config.max_num_seqs: # start decoding when max running
+    #             self._request_tracker.new_running_event.set()
+    #         await asyncio.sleep(0)
 
-    async def run_local_engine_loop(self): # for dispatching remote prefill
-        # Initialize the RequestTracker here so it uses the right event loop.
-        has_requests_in_progress = False
-        while True:
-            if not has_requests_in_progress:
-                await self._request_tracker.wait_for_new_running()
-                self._request_tracker.new_running_event.clear()
-            has_requests_in_progress = await self.engine_step('decode')
-            if has_requests_in_progress and self.engine.scheduler.waiting:
-                self._request_tracker.new_requests_event.set()
-            await asyncio.sleep(0)
+    # async def run_local_engine_loop(self): # for dispatching remote prefill
+    #     # Initialize the RequestTracker here so it uses the right event loop.
+    #     has_requests_in_progress = False
+    #     while True:
+    #         if not has_requests_in_progress:
+    #             await self._request_tracker.wait_for_new_running()
+    #             self._request_tracker.new_running_event.clear()
+    #         has_requests_in_progress = await self.engine_step('decode')
+    #         if has_requests_in_progress and self.engine.scheduler.waiting:
+    #             self._request_tracker.new_requests_event.set()
+    #         await asyncio.sleep(0)
 
     async def add_request(
         self,
