@@ -485,7 +485,7 @@ class AsyncLLMEngine:
                 request_output, verbose=self.log_requests)
 
         if enhanced:
-            return len(request_outputs) > 0 or not self.has_on_going_remote
+            return len(request_outputs) > 0 or (not self.has_on_going_remote and self.engine.scheduler.waiting)
         else:
             return len(request_outputs) > 0
 
@@ -497,9 +497,11 @@ class AsyncLLMEngine:
             self._request_tracker.process_request_output(
                 request_output, verbose=self.log_requests)
 
-        while not self.engine.scheduler.receive_kv_task.done():
-            pass
-        irecv_reqs = self.engine.scheduler.receive_kv_task.result()
+
+        self.engine.scheduler.receive_kv_task.add_done_callback(self.handle_irecv)
+
+    def handle_irecv(self, task: asyncio.Task):
+        irecv_reqs = task.result()
         for req in irecv_reqs:
             req.wait()
 
