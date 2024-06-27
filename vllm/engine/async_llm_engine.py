@@ -210,6 +210,7 @@ class _AsyncLLMEngine(LLMEngine):
             self.wrapper.has_on_going_remote = True
 
         if not local_scheduler_outputs.is_empty():
+            self.scheduler.should_schedule_local = False
         # Execute the model.
             all_outputs = await self._run_workers_async(
                 "execute_model",
@@ -222,6 +223,7 @@ class _AsyncLLMEngine(LLMEngine):
 
             # Only the driver worker returns the sampling results.
             output = all_outputs[0]
+            self.scheduler.should_schedule_local = True
         else:
             output = []
 
@@ -513,6 +515,9 @@ class AsyncLLMEngine:
         self.engine.scheduler.remote_scheduler_outputs= None
 
         self.has_on_going_remote = False
+
+        if self.engine.scheduler.waiting:
+            self.ref = asyncio.create_task(self.engine_step(enhanced=True))
 
     async def _engine_abort(self, request_ids: Iterable[str]):
         if self.engine_use_ray:
