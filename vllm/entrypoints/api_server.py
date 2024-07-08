@@ -77,6 +77,8 @@ async def generate(request: Request) -> Response:
 @app.post("/receive_kv_cache")
 async def receive_kv_cache(request: Request) -> Response:
     '''just send back ack for now, but in the future we can use this to update the kv cache with the received blocks'''
+    if not engine.is_running:
+        engine.start_background_loop()
     request_dict = await request.json()
     from_rank = request_dict.pop("from_rank")
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
@@ -108,7 +110,21 @@ async def decode(request: Request) -> Response:
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
     engine.pre_running_requests.append(seq_groups) # process later
-    if sum(len(seq_groups) for seq_groups in engine.pre_running_requests) >= engine.engine.scheduler_config.max_num_seqs:
+    # if sum(len(seq_groups) for seq_groups in engine.pre_running_requests) >= engine.engine.scheduler_config.max_num_seqs:
+    # engine._request_tracker.new_requests_event.set()
+    # engine.engine.scheduler.running.extend([seq_group for seq_groups in engine.pre_running_requests for seq_group in seq_groups])
+    # num_batches = len(engine.pre_running_requests)
+    if sum([len(seq_groups) for seq_groups in engine.pre_running_requests]) >= engine.engine.scheduler_config.max_num_seqs:
+        for irecv_reqs in engine.irecv_reqs:
+            for irecv_req in irecv_reqs:
+                irecv_req.wait()
+        for task in engine.receive_kv_cache_tasks:
+            irecv_reqs = await task
+            for irecv_req in irecv_reqs:
+                irecv_req.wait()
+
+        engine.irecv_reqs = []
+        engine.receive_kv_cache_tasks = []
         engine._request_tracker.new_requests_event.set()
 
     ret = {"output":  "ack"}

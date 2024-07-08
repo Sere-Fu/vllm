@@ -405,7 +405,8 @@ class AsyncLLMEngine:
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
         self.receive_kv_cache_tasks: List[asyncio.Task] = []
-        self.pre_running_requests: List[List[SequenceGroupMetadata], List[SequenceGroup], Any] = []
+        self.pre_running_requests: List[List[SequenceGroup]] = []
+        self.irecv_reqs: List[List[asyncio.Future]] = []
 
     @property
     def is_running(self) -> bool:
@@ -452,17 +453,25 @@ class AsyncLLMEngine:
         return engine_class(*args, **kwargs)
 
     async def create_receive_kv_cache_task(self, from_rank: int, to_receive: List[Tuple[int, int]]) -> None:
-        self.receive_kv_cache_tasks.append(asyncio.get_event_loop().run_in_executor(None, partial(self.receive_kv_cache, from_rank, to_receive)))
+        task = asyncio.get_event_loop().run_in_executor(None, partial(self.receive_kv_cache, from_rank, to_receive))
+        task.add_done_callback(self.handle_irecv_reqs)
+        self.receive_kv_cache_tasks.append(task)
 
     def receive_kv_cache(self, from_rank: int, to_receive: List[Tuple[int, int]]):
         assert get_engine_type() == EngineType.DECODING
 
         reqs = []
-        for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
+        for key_cache, value_cache in self.engine.driver_worker.cache_engine.gpu_cache:
             for (start, l) in to_receive:
                 reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
                 reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
         return reqs
+
+    def handle_irecv_reqs(self, task: asyncio.Task):
+        irecv_reqs = task.result()
+        self.irecv_reqs.append(irecv_reqs)
+        self.receive_kv_cache_tasks.remove(task)
+
 
     async def engine_step(self) -> bool:
         """Kick the engine to process the waiting requests.
@@ -498,8 +507,10 @@ class AsyncLLMEngine:
         for request_output in request_outputs:
             if get_engine_type() == EngineType.PREFILL:
                 request_output.finished = True
-            self._request_tracker.process_request_output(
-                request_output, verbose=self.log_requests)
+                self._request_tracker.process_request_output(
+                    request_output, verbose=self.log_requests)
+            else:
+                print(request_output)
 
         if get_engine_type() == EngineType.PREFILL:
             return self.engine.scheduler.waiting
@@ -535,6 +546,8 @@ class AsyncLLMEngine:
         while True:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
+                self.engine.scheduler.running.extend([seq_group for seq_groups in self.pre_running_requests for seq_group in seq_groups])
+                self._request_tracker.new_requests_event.clear()
             has_requests_in_progress = await self.engine_step()
             await asyncio.sleep(0)
 
