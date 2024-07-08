@@ -105,7 +105,6 @@ class PagedAttention(nn.Module):
             assert input_metadata.is_prompt
             assert input_metadata.to_send is not None
             for start, l in input_metadata.to_send:
-                print(f"isend {start}, {l}")
                 torch.distributed.isend(key_cache[start: start+l], input_metadata.to_rank)
                 torch.distributed.isend(value_cache[start: start+l], input_metadata.to_rank)
 

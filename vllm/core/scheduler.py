@@ -103,8 +103,6 @@ class Scheduler:
 
         # Sequence groups in the WAITING state.
         self.waiting: Deque[SequenceGroup] = deque()
-        # Sequence groups in the PRE_RUNNING state.
-        self.pre_running: Deque[SequenceGroup] = deque()
         # Sequence groups in the RUNNING state.
         self.running: Deque[SequenceGroup] = deque()
         # Sequence groups in the SWAPPED state.

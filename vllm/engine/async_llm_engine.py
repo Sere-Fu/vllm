@@ -471,10 +471,8 @@ class AsyncLLMEngine:
         reqs = []
         for key_cache, value_cache in self.engine.driver_worker.cache_engine.gpu_cache:
             for (start, l) in to_receive:
-                print(f"start irecv {start}, {l}")
                 reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
                 reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
-                print(f"finished irecv {start}, {l}")
         return reqs
 
     # def handle_irecv_reqs(self, task: asyncio.Task):
@@ -520,7 +518,8 @@ class AsyncLLMEngine:
                 self._request_tracker.process_request_output(
                     request_output, verbose=self.log_requests)
             else:
-                print(request_output)
+                if request_output.finished:
+                    print(request_output)
 
         if get_engine_type() == EngineType.PREFILL:
             return self.engine.scheduler.waiting
@@ -557,6 +556,7 @@ class AsyncLLMEngine:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
                 self.engine.scheduler.running.extend([seq_group for seq_groups in self.pre_running_requests for seq_group in seq_groups])
+                self.pre_running_requests.clear()
                 self._request_tracker.new_requests_event.clear()
             has_requests_in_progress = await self.engine_step()
             await asyncio.sleep(0)

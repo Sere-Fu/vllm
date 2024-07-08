@@ -121,13 +121,8 @@ async def decode(request: Request) -> Response:
         #         irecv_req.wait()
         for task in engine.receive_kv_cache_tasks:
             irecv_reqs = await task
-            print(len(irecv_reqs))
-            i = 0
             for irecv_req in irecv_reqs:
-                while not irecv_req.is_completed():
-                    print(f"to_yield {i}")
-                    i += 1
-                    await asyncio.sleep(0)
+                irecv_req.wait()
 
         # engine.irecv_reqs = []
         engine.receive_kv_cache_tasks = []
