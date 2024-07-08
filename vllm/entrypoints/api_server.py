@@ -88,11 +88,9 @@ async def receive_kv_cache(request: Request) -> Response:
 @app.post("/decode")
 async def decode(request: Request) -> Response:
     request_dict = await request.json()
-    seq_group_metadata_list = unmarshalFromB64String(request_dict.pop("encoded_seq_group_metadata_list"))
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
-    output = unmarshalFromB64String(request_dict.pop("encoded_output"))
 
-    engine.pre_running_requests.append((seq_group_metadata_list, seq_groups, output)) # process later
+    engine.pre_running_requests.append(seq_groups) # process later
 
     ret = {"output":  "ack"}
     return JSONResponse(ret)

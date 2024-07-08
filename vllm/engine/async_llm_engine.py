@@ -222,9 +222,9 @@ class _AsyncLLMEngine(LLMEngine):
             output = []
 
         if get_engine_type() == EngineType.PREFILL:
-            await self.decode_remote(seq_group_metadata_list, scheduler_outputs.scheduled_seq_groups, output)
-            # return [seq_group.request_id for seq_group in scheduler_outputs.scheduled_seq_groups]
-            return self._process_model_outputs(output, scheduler_outputs)
+            res = self._process_model_outputs(output, scheduler_outputs)
+            await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
+            return res
         else:
             return self._process_model_outputs(output, scheduler_outputs)
 
@@ -256,13 +256,9 @@ class _AsyncLLMEngine(LLMEngine):
                     break
 
     async def decode_remote(self,
-                            seq_group_metadata_list: List[SequenceGroupMetadata],
-                            seq_groups: List[SequenceGroup],
-                            output) -> Any:
+                            seq_groups: List[SequenceGroup]) -> Any:
         pload = {
-            "encoded_seq_group_metadata_list": marshalToB64String(seq_group_metadata_list),
             "encoded_seq_groups": marshalToB64String(seq_groups),
-            "encoded_output": marshalToB64String(output),
         }
 
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
