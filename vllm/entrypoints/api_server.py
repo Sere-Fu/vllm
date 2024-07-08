@@ -10,6 +10,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
+from vllm.utils import marshalToB64String, unmarshalFromB64String, coalesce_blocks
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
@@ -71,6 +72,30 @@ async def generate(request: Request) -> Response:
     ret = {"text": text_outputs}
     return JSONResponse(ret)
 
+
+@app.post("/receive_kv_cache")
+async def receive_kv_cache(request: Request) -> Response:
+    '''just send back ack for now, but in the future we can use this to update the kv cache with the received blocks'''
+    request_dict = await request.json()
+    from_rank = request_dict.pop("from_rank")
+    to_receive = request_dict.pop("to_receive")
+
+    await engine.create_receive_kv_cache_task(from_rank, to_receive)
+
+    ret = {"output":  "ack"}
+    return JSONResponse(ret)
+
+@app.post("/decode")
+async def decode(request: Request) -> Response:
+    request_dict = await request.json()
+    seq_group_metadata_list = unmarshalFromB64String(request_dict.pop("encoded_seq_group_metadata_list"))
+    seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
+    output = unmarshalFromB64String(request_dict.pop("encoded_output"))
+
+    engine.pre_running_requests.append((seq_group_metadata_list, seq_groups, output)) # process later
+
+    ret = {"output":  "ack"}
+    return JSONResponse(ret)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

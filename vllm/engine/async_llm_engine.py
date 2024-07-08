@@ -1,5 +1,8 @@
 import asyncio
 import time
+import aiohttp
+import json
+import torch
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
@@ -12,6 +15,8 @@ from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
+from vllm.sequence import SequenceGroupMetadata, SequenceGroup
+from vllm.utils import marshalToB64String, unmarshalFromB64String, coalesce_blocks
 
 logger = init_logger(__name__)
 
@@ -141,7 +146,7 @@ class RequestTracker:
 
         self._request_streams[request_id].finish()
 
-    def get_new_and_finished_requests(self) -> Tuple[List[Dict], Set[str]]:
+    def get_new_and_finished_requests(self, get_new: bool) -> Tuple[List[Dict], Set[str]]:
         """Get the new requests and finished requests to be
         sent to the engine."""
         new_requests: List[Dict] = []
@@ -152,16 +157,17 @@ class RequestTracker:
             finished_requests.add(request_id)
             self._request_streams.pop(request_id, None)
 
-        while not self._new_requests.empty():
-            stream, new_request = self._new_requests.get_nowait()
-            if stream.request_id in finished_requests:
-                # The request has already been aborted.
-                stream.finish()
-                continue
-            self._request_streams[stream.request_id] = stream
-            new_requests.append(new_request)
+        if get_new:
+            while not self._new_requests.empty():
+                stream, new_request = self._new_requests.get_nowait()
+                if stream.request_id in finished_requests:
+                    # The request has already been aborted.
+                    stream.finish()
+                    continue
+                self._request_streams[stream.request_id] = stream
+                new_requests.append(new_request)
 
-        self.new_requests_event.clear() # drain all requests at once
+            self.new_requests_event.clear() # drain all requests at once
 
         return new_requests, finished_requests
 
@@ -171,6 +177,9 @@ class RequestTracker:
 
 class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
+    def __init__(self, wrapper, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.wrapper = wrapper
 
     async def step_async(self) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
@@ -182,7 +191,19 @@ class _AsyncLLMEngine(LLMEngine):
         and updates the scheduler with the model outputs. Finally, it decodes
         the sequences and returns the newly generated results.
         """
-        seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
+        if get_engine_type() == EngineType.PREFILL:
+            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("prefill")
+        elif get_engine_type() == EngineType.DECODING:
+            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
+        elif get_engine_type() == EngineType.MIXED:
+            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("mixed")
+        else:
+            raise ValueError(f"Unknown engine type {get_engine_type()}")
+
+        if get_engine_type() == EngineType.PREFILL:
+            # self.scheduler.decode_remote_task = asyncio.create_task(self.decode_remote(seq_group_metadata_list))
+            # self.scheduler.decode_remote_task.add_done_callback(self.wrapper.decode_remote_callback)
+            await self.notify_decode_worker_to_receive_kv_cache(seq_group_metadata_list)
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
@@ -200,7 +221,66 @@ class _AsyncLLMEngine(LLMEngine):
         else:
             output = []
 
-        return self._process_model_outputs(output, scheduler_outputs)
+        if get_engine_type() == EngineType.PREFILL:
+            await self.decode_remote(seq_group_metadata_list, scheduler_outputs.scheduled_seq_groups, output)
+            # return [seq_group.request_id for seq_group in scheduler_outputs.scheduled_seq_groups]
+            return self._process_model_outputs(output, scheduler_outputs)
+        else:
+            return self._process_model_outputs(output, scheduler_outputs)
+
+    async def notify_decode_worker_to_receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]) -> None:
+        to_receive = coalesce_blocks([block
+                                        for seq_group_metadata in seq_group_metadata_list
+                                        for blocks in seq_group_metadata.block_tables.values()
+                                        for block in blocks ])
+        pload = {
+            "from_rank": torch.distributed.get_rank(),
+            "to_receive": to_receive,
+        }
+
+        timeout = aiohttp.ClientTimeout(total=3 * 3600)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                async with session.post("http://127.0.0.1:8001/receive_kv_cache",
+                                        headers={"User-Agent": "p-worker"},
+                                        json=pload) as response:
+                    chunks = []
+                    async for chunk, _ in response.content.iter_chunks():
+                        chunks.append(chunk)
+                output = b"".join(chunks).decode("utf-8")
+                output = json.loads(output)
+
+                # Re-send the request if it failed.
+                if "error" not in output:
+                    break
+
+    async def decode_remote(self,
+                            seq_group_metadata_list: List[SequenceGroupMetadata],
+                            seq_groups: List[SequenceGroup],
+                            output) -> Any:
+        pload = {
+            "encoded_seq_group_metadata_list": marshalToB64String(seq_group_metadata_list),
+            "encoded_seq_groups": marshalToB64String(seq_groups),
+            "encoded_output": marshalToB64String(output),
+        }
+
+        timeout = aiohttp.ClientTimeout(total=3 * 3600)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                async with session.post("http://127.0.0.1:8001/decode",
+                                        headers={"User-Agent": "p-worker"},
+                                        json=pload) as response:
+                    chunks = []
+                    async for chunk, _ in response.content.iter_chunks():
+                        chunks.append(chunk)
+                output = b"".join(chunks).decode("utf-8")
+                output = json.loads(output)
+
+                # Re-send the request if it failed.
+                if "error" not in output:
+                    break
 
     async def encode_request_async(
         self,
@@ -318,7 +398,7 @@ class AsyncLLMEngine:
         self.engine_use_ray = engine_use_ray
         self.log_requests = log_requests
         self.max_log_len = max_log_len
-        self.engine = self._init_engine(*args, **kwargs)
+        self.engine = self._init_engine(self, *args, **kwargs)
 
         self.background_loop = None
         # We need to keep a reference to unshielded
@@ -327,6 +407,8 @@ class AsyncLLMEngine:
         self._background_loop_unshielded = None
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
+        self.receive_kv_cache_tasks: List[asyncio.Task] = []
+        self.pre_running_requests: List[List[SequenceGroupMetadata], List[SequenceGroup], Any] = []
 
     @property
     def is_running(self) -> bool:
@@ -365,13 +447,30 @@ class AsyncLLMEngine:
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
 
+    async def create_receive_kv_cache_task(self, from_rank: int, to_receive: List[Tuple[int, int]]) -> None:
+        self.receive_kv_cache_tasks.append(asyncio.get_event_loop().run_in_executor(None, partial(self.receive_kv_cache, from_rank, to_receive)))
+
+    def receive_kv_cache(self, from_rank: int, to_receive: List[Tuple[int, int]]):
+        assert get_engine_type() == EngineType.DECODING
+
+        reqs = []
+        for key_cache, value_cache in self.driver_worker.cache_engine.gpu_cache:
+            for (start, l) in to_receive:
+                reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
+                reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
+        return reqs
+
     async def engine_step(self) -> bool:
         """Kick the engine to process the waiting requests.
 
         Returns True if there are in-progress requests."""
 
-        new_requests, finished_requests = (
-            self._request_tracker.get_new_and_finished_requests())
+        if get_engine_type() == EngineType.DECODING:
+            new_requests, finished_requests = (
+                self._request_tracker.get_new_and_finished_requests(False))
+        else:
+            new_requests, finished_requests = (
+                self._request_tracker.get_new_and_finished_requests(True))
 
         for new_request in new_requests:
             # Add the request into the vLLM engine's waiting queue.
@@ -391,10 +490,23 @@ class AsyncLLMEngine:
 
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
+            if get_engine_type() == EngineType.PREFILL:
+                request_output.finished = True
             self._request_tracker.process_request_output(
                 request_output, verbose=self.log_requests)
 
-        return len(request_outputs) > 0
+        if get_engine_type() == EngineType.PREFILL:
+            return self.engine.scheduler.waiting
+        else:
+            return len(request_outputs) > 0
+
+    def decode_remote_callback(self, task: asyncio.Task):
+        remote_outputs = task.result()
+        for request_output in remote_outputs:
+            self._request_tracker.process_request_output(
+                request_output, verbose=self.log_requests)
+
+        self.engine.scheduler.decode_remote_task = None
 
     async def _engine_abort(self, request_ids: Iterable[str]):
         if self.engine_use_ray:

@@ -165,15 +165,14 @@ class LLMEngine:
             "Ray is required if parallel_config.world_size > 1.")
 
         self.workers: List[Worker] = []
-        distributed_init_method = get_distributed_init_method(
-            get_ip(), get_open_port())
+        distributed_init_method = "tcp://127.0.0.1:9999"
         self.driver_worker = Worker(
             self.model_config,
             self.parallel_config,
             self.scheduler_config,
             self.device_config,
             local_rank=0,
-            rank=0,
+            rank=0+self.parallel_config.driver_rank,
             distributed_init_method=distributed_init_method,
             lora_config=self.lora_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
@@ -256,11 +255,7 @@ class LLMEngine:
         for worker, (node_id, _) in zip(self.workers, worker_node_and_gpu_ids):
             worker.set_cuda_visible_devices.remote(node_gpus[node_id])
 
-        if get_engine_type() == EngineType.MIXED:
-            distributed_init_method = get_distributed_init_method(
-                driver_ip, get_open_port())
-        else:
-            distributed_init_method = f"file:///tmp/sharedFile"
+        distributed_init_method = "tcp://127.0.0.1:9999"
 
         # Lazy import the Worker to avoid importing torch.cuda/xformers
         # before CUDA_VISIBLE_DEVICES is set in the Worker
@@ -342,13 +337,14 @@ class LLMEngine:
             by adjusting the `gpu_memory_utilization` parameters.
         """
         # Get the maximum number of blocks that can be allocated on GPU and CPU.
-        num_blocks = self._run_workers(
-            "profile_num_available_blocks",
-            block_size=self.cache_config.block_size,
-            gpu_memory_utilization=self.cache_config.gpu_memory_utilization,
-            cpu_swap_space=self.cache_config.swap_space_bytes,
-            cache_dtype=self.cache_config.cache_dtype,
-        )
+        # num_blocks = self._run_workers(
+        #     "profile_num_available_blocks",
+        #     block_size=self.cache_config.block_size,
+        #     gpu_memory_utilization=self.cache_config.gpu_memory_utilization,
+        #     cpu_swap_space=self.cache_config.swap_space_bytes,
+        #     cache_dtype=self.cache_config.cache_dtype,
+        # )
+        num_blocks = [(20000, 4000)]
 
         # Since we use a shared centralized controller, we take the minimum
         # number of blocks across all workers to make sure all the memory

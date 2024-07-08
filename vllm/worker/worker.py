@@ -249,16 +249,29 @@ def init_distributed_environment(
             "distributed_init_method must be set if torch.distributed "
             "is not already initialized")
     else:
+        print(f"rank: {rank}, start init_process_group")
+        print(f"rank: {rank}, world_size: {parallel_config.grand_world_size}, init_method: {distributed_init_method}")
         torch.distributed.init_process_group(
             backend="nccl",
             world_size=parallel_config.grand_world_size,
             rank=rank,
             init_method=distributed_init_method,
         )
+        print(f"rank: {rank}, finish init_process_group")
 
     # A small all_reduce for warmup.
+    torch.distributed.all_reduce(torch.zeros(1).cuda())
+    print(f"rank: {rank}, global warm up finished")
+
+    if parallel_config.grand_world_size != parallel_config.world_size:
+        if rank == 0:
+            req = torch.distributed.isend(torch.zeros(1).cuda(), 1)
+            req.wait()
+        else:
+            req = torch.distributed.irecv(torch.zeros(1).cuda(), 0)
+            req.wait()
+    print(f"rank: {rank}, p2p warm up finished")
     ensure_model_parallel_initialized(parallel_config)
-    tensor_model_parallel_all_reduce(torch.zeros(1).cuda())
 
 
 def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype):
