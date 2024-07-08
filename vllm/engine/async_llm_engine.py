@@ -84,6 +84,7 @@ class RequestTracker:
         self._new_requests: asyncio.Queue[Tuple[AsyncStream,
                                                 dict]] = asyncio.Queue()
         self.new_requests_event = None
+        self.new_decode_event = None
 
     def __contains__(self, item):
         return item in self._request_streams
@@ -203,7 +204,7 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             # self.scheduler.decode_remote_task = asyncio.create_task(self.decode_remote(seq_group_metadata_list))
             # self.scheduler.decode_remote_task.add_done_callback(self.wrapper.decode_remote_callback)
-            await self.notify_decode_worker_to_receive_kv_cache(seq_group_metadata_list)
+            await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
@@ -228,14 +229,14 @@ class _AsyncLLMEngine(LLMEngine):
         else:
             return self._process_model_outputs(output, scheduler_outputs)
 
-    async def notify_decode_worker_to_receive_kv_cache(self, seq_group_metadata_list: List[SequenceGroupMetadata]) -> None:
-        to_receive = coalesce_blocks([block
-                                        for seq_group_metadata in seq_group_metadata_list
-                                        for blocks in seq_group_metadata.block_tables.values()
-                                        for block in blocks ])
+    async def notify_decode_worker_to_receive_kv_cache(self, seq_groups: List[SequenceGroup]) -> None:
+        # to_receive = coalesce_blocks([block
+        #                                 for seq_group_metadata in seq_group_metadata_list
+        #                                 for blocks in seq_group_metadata.block_tables.values()
+        #                                 for block in blocks ])
         pload = {
             "from_rank": torch.distributed.get_rank(),
-            "to_receive": to_receive,
+            "encoded_seq_groups": marshalToB64String(seq_groups),
         }
 
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
@@ -417,8 +418,15 @@ class AsyncLLMEngine:
             raise RuntimeError("Background loop is already running.")
         self._request_tracker.init_event()
 
-        self._background_loop_unshielded = asyncio.get_event_loop(
-        ).create_task(self.run_engine_loop())
+        if get_engine_type() == EngineType.PREFILL:
+            self._background_loop_unshielded = asyncio.get_event_loop(
+            ).create_task(self.run_engine_loop_prefill())
+        elif get_engine_type() == EngineType.DECODING:
+            self._background_loop_unshielded = asyncio.get_event_loop(
+            ).create_task(self.run_engine_loop_decode())
+        else:
+            raise ValueError(f"Unknown engine type {get_engine_type()}")
+
         self._background_loop_unshielded.add_done_callback(
             partial(_raise_exception_on_finish,
                     request_tracker=self._request_tracker))
@@ -482,6 +490,8 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()
         else:
+            if get_engine_type() == EngineType.DECODING:
+                pass # pre-running -> running
             request_outputs = await self.engine.step_async()
 
         # Put the outputs into the corresponding streams.
@@ -510,7 +520,16 @@ class AsyncLLMEngine:
         else:
             self.engine.abort_request(request_ids)
 
-    async def run_engine_loop(self):
+    async def run_engine_loop_prefill(self):
+        # Initialize the RequestTracker here so it uses the right event loop.
+        has_waiting = False
+        while True:
+            if not has_waiting:
+                await self._request_tracker.wait_for_new_requests()
+            has_waiting = await self.engine_step()
+            await asyncio.sleep(0)
+
+    async def run_engine_loop_decode(self):
         # Initialize the RequestTracker here so it uses the right event loop.
         has_requests_in_progress = False
         while True:

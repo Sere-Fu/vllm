@@ -1,6 +1,6 @@
 import argparse
 import json
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Dict, List
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -11,6 +11,7 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
 from vllm.utils import marshalToB64String, unmarshalFromB64String, coalesce_blocks
+from vllm.sequence import SequenceStatus
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
@@ -78,7 +79,23 @@ async def receive_kv_cache(request: Request) -> Response:
     '''just send back ack for now, but in the future we can use this to update the kv cache with the received blocks'''
     request_dict = await request.json()
     from_rank = request_dict.pop("from_rank")
-    to_receive = request_dict.pop("to_receive")
+    seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
+
+    bts = []
+    for seq_group in seq_groups:
+        for seq in seq_group.get_seqs():
+            seq.status = SequenceStatus.WAITING
+        engine.engine.scheduler._allocate(seq_group)
+        block_tables: Dict[int, List[int]] = {}
+        for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
+            seq_id = seq.seq_id
+            block_tables[seq_id] = engine.engine.scheduler.block_manager.get_block_table(seq)
+            bts.append(block_tables)
+
+    to_receive = coalesce_blocks([block
+                                    for block_tables in bts
+                                    for blocks in block_tables.values()
+                                    for block in blocks ])
 
     await engine.create_receive_kv_cache_task(from_rank, to_receive)
 
@@ -91,6 +108,8 @@ async def decode(request: Request) -> Response:
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
     engine.pre_running_requests.append(seq_groups) # process later
+    if sum(len(seq_groups) for seq_groups in engine.pre_running_requests) >= engine.engine.scheduler_config.max_num_seqs:
+        engine._request_tracker.new_requests_event.set()
 
     ret = {"output":  "ack"}
     return JSONResponse(ret)
