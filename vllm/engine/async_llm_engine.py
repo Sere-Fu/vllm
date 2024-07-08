@@ -208,14 +208,22 @@ class _AsyncLLMEngine(LLMEngine):
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
-            all_outputs = await self._run_workers_async(
-                "execute_model",
-                driver_kwargs={
-                    "seq_group_metadata_list": seq_group_metadata_list,
-                    "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
-                    "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
-                    "blocks_to_copy": scheduler_outputs.blocks_to_copy,
-                })
+            if get_engine_type() == EngineType.PREFILL:
+                all_outputs = await self._run_workers_async(
+                    "prefill",
+                    driver_kwargs={
+                        "seq_group_metadata_list": seq_group_metadata_list,
+                        "to_rank": 1,
+                    })
+            else:
+                all_outputs = await self._run_workers_async(
+                    "execute_model",
+                    driver_kwargs={
+                        "seq_group_metadata_list": seq_group_metadata_list,
+                        "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
+                        "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
+                        "blocks_to_copy": scheduler_outputs.blocks_to_copy,
+                    })
 
             # Only the driver worker returns the sampling results.
             output = all_outputs[0]
@@ -454,7 +462,7 @@ class AsyncLLMEngine:
 
     async def create_receive_kv_cache_task(self, from_rank: int, to_receive: List[Tuple[int, int]]) -> None:
         task = asyncio.get_event_loop().run_in_executor(None, partial(self.receive_kv_cache, from_rank, to_receive))
-        task.add_done_callback(self.handle_irecv_reqs)
+        # task.add_done_callback(self.handle_irecv_reqs)
         self.receive_kv_cache_tasks.append(task)
 
     def receive_kv_cache(self, from_rank: int, to_receive: List[Tuple[int, int]]):
@@ -463,14 +471,16 @@ class AsyncLLMEngine:
         reqs = []
         for key_cache, value_cache in self.engine.driver_worker.cache_engine.gpu_cache:
             for (start, l) in to_receive:
+                print(f"start irecv {start}, {l}")
                 reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
                 reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
+                print(f"finished irecv {start}, {l}")
         return reqs
 
-    def handle_irecv_reqs(self, task: asyncio.Task):
-        irecv_reqs = task.result()
-        self.irecv_reqs.append(irecv_reqs)
-        self.receive_kv_cache_tasks.remove(task)
+    # def handle_irecv_reqs(self, task: asyncio.Task):
+    #     irecv_reqs = task.result()
+    #     self.irecv_reqs.append(irecv_reqs)
+    #     self.receive_kv_cache_tasks.remove(task)
 
 
     async def engine_step(self) -> bool:

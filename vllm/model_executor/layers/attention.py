@@ -101,6 +101,14 @@ class PagedAttention(nn.Module):
                 input_metadata.kv_cache_dtype,
             )
 
+        if input_metadata.to_rank != -1:
+            assert input_metadata.is_prompt
+            assert input_metadata.to_send is not None
+            for start, l in input_metadata.to_send:
+                print(f"isend {start}, {l}")
+                torch.distributed.isend(key_cache[start: start+l], input_metadata.to_rank)
+                torch.distributed.isend(value_cache[start: start+l], input_metadata.to_rank)
+
         if input_metadata.is_prompt:
             # Prompt run.
             if self.num_kv_heads != self.num_heads:

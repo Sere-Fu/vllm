@@ -1,6 +1,7 @@
 import argparse
 import json
 from typing import AsyncGenerator, Dict, List
+import asyncio
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -115,15 +116,20 @@ async def decode(request: Request) -> Response:
     # engine.engine.scheduler.running.extend([seq_group for seq_groups in engine.pre_running_requests for seq_group in seq_groups])
     # num_batches = len(engine.pre_running_requests)
     if sum([len(seq_groups) for seq_groups in engine.pre_running_requests]) >= engine.engine.scheduler_config.max_num_seqs:
-        for irecv_reqs in engine.irecv_reqs:
-            for irecv_req in irecv_reqs:
-                irecv_req.wait()
+        # for irecv_reqs in engine.irecv_reqs:
+        #     for irecv_req in irecv_reqs:
+        #         irecv_req.wait()
         for task in engine.receive_kv_cache_tasks:
             irecv_reqs = await task
+            print(len(irecv_reqs))
+            i = 0
             for irecv_req in irecv_reqs:
-                irecv_req.wait()
+                while not irecv_req.is_completed():
+                    print(f"to_yield {i}")
+                    i += 1
+                    await asyncio.sleep(0)
 
-        engine.irecv_reqs = []
+        # engine.irecv_reqs = []
         engine.receive_kv_cache_tasks = []
         engine._request_tracker.new_requests_event.set()
 
