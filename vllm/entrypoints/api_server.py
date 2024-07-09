@@ -102,7 +102,7 @@ async def receive_kv_cache(request: Request) -> Response:
 
     await engine.create_receive_kv_cache_task(from_rank, to_receive)
 
-    ret = {"output":  "ack"}
+    ret = {"encoded_bts": marshalToB64String(bts)}
     return JSONResponse(ret)
 
 @app.post("/decode")

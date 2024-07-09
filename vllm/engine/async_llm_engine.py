@@ -204,7 +204,9 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             # self.scheduler.decode_remote_task = asyncio.create_task(self.decode_remote(seq_group_metadata_list))
             # self.scheduler.decode_remote_task.add_done_callback(self.wrapper.decode_remote_callback)
-            await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
+            bts = await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
+            for seq_group_metadata in seq_group_metadata_list:
+                seq_group_metadata.block_tables = bts.pop(0)
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
@@ -263,6 +265,8 @@ class _AsyncLLMEngine(LLMEngine):
                 # Re-send the request if it failed.
                 if "error" not in output:
                     break
+
+        return unmarshalFromB64String(output['encoded_bts'])
 
     async def decode_remote(self,
                             seq_groups: List[SequenceGroup]) -> Any:
@@ -471,6 +475,7 @@ class AsyncLLMEngine:
         reqs = []
         for key_cache, value_cache in self.engine.driver_worker.cache_engine.gpu_cache:
             for (start, l) in to_receive:
+                # print(f"recv {start} {l}")
                 reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
                 reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
         return reqs
@@ -519,7 +524,7 @@ class AsyncLLMEngine:
                     request_output, verbose=self.log_requests)
             else:
                 if request_output.finished:
-                    print(request_output)
+                    print(len(request_output.outputs[0].token_ids))
 
         if get_engine_type() == EngineType.PREFILL:
             return self.engine.scheduler.waiting
