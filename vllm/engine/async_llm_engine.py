@@ -10,6 +10,7 @@ from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
 from vllm.lora.request import LoRARequest
 from vllm.config import ModelConfig
 from vllm.engine.arg_utils import AsyncEngineArgs
+from concurrent.futures import ThreadPoolExecutor
 from vllm.engine.llm_engine import LLMEngine, EngineType, get_engine_type
 from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
@@ -420,6 +421,8 @@ class AsyncLLMEngine:
         self.pre_running_requests: List[List[SequenceGroup]] = []
         self.irecv_reqs: List[List[asyncio.Future]] = []
 
+        self.irecv_executor = ThreadPoolExecutor(max_workers=1)
+
     @property
     def is_running(self) -> bool:
         return (self.background_loop is not None
@@ -465,7 +468,8 @@ class AsyncLLMEngine:
         return engine_class(*args, **kwargs)
 
     async def create_receive_kv_cache_task(self, from_rank: int, to_receive: List[Tuple[int, int]]) -> None:
-        task = asyncio.get_event_loop().run_in_executor(None, partial(self.receive_kv_cache, from_rank, to_receive))
+        # task = asyncio.get_event_loop().run_in_executor(self.irecv_executor, partial(self.receive_kv_cache, from_rank, to_receive))
+        task = self.irecv_executor.submit(partial(self.receive_kv_cache, from_rank, to_receive))
         # task.add_done_callback(self.handle_irecv_reqs)
         self.receive_kv_cache_tasks.append(task)
 

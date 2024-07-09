@@ -120,7 +120,8 @@ async def decode(request: Request) -> Response:
         #     for irecv_req in irecv_reqs:
         #         irecv_req.wait()
         for task in engine.receive_kv_cache_tasks:
-            irecv_reqs = await task
+            # irecv_reqs = await task
+            irecv_reqs = task.result()
             for irecv_req in irecv_reqs:
                 irecv_req.wait()
 
