@@ -221,7 +221,7 @@ class _AsyncLLMEngine(LLMEngine):
                         "to_rank": 1,
                     })
             else:
-                print("scheduled decode:", len(scheduler_outputs.scheduled_seq_groups))
+                print("scheduled decode:", time.perf_counter(), file=sys.stderr)
                 all_outputs = await self._run_workers_async(
                     "execute_model",
                     driver_kwargs={
@@ -521,15 +521,15 @@ class AsyncLLMEngine:
         else:
             request_outputs = await self.engine.step_async()
 
+        if request_outputs[0].finished:
+            print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
+
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
             if get_engine_type() == EngineType.PREFILL:
                 request_output.finished = True
                 self._request_tracker.process_request_output(
                     request_output, verbose=self.log_requests)
-            else:
-                if request_output.finished:
-                    print(time.perf_counter(), file=sys.stderr)
 
         if get_engine_type() == EngineType.PREFILL:
             return self.engine.scheduler.waiting

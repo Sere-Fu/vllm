@@ -1,6 +1,7 @@
 from collections import deque
 import enum
 import time
+import sys
 import asyncio
 from typing import Deque, Dict, Iterable, List, Optional, Tuple, Union, Set
 
@@ -473,6 +474,7 @@ class Scheduler:
     def _schedule_decode(self) -> SchedulerOutputs:
         if not self.running:
             if self.pre_running:
+                print("pre_running loaded:", time.perf_counter(), file=sys.stderr)
                 self.running.extend(self.pre_running.pop(0))
         # Blocks that need to be swaped or copied before model execution.
         blocks_to_copy: Dict[int, List[int]] = {}
