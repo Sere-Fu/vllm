@@ -1,6 +1,7 @@
 import asyncio
 import time
 from functools import partial
+import sys
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
 
@@ -12,6 +13,7 @@ from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
+from vllm.utils import perf_execution
 
 logger = init_logger(__name__)
 
@@ -182,7 +184,8 @@ class _AsyncLLMEngine(LLMEngine):
         and updates the scheduler with the model outputs. Finally, it decodes
         the sequences and returns the newly generated results.
         """
-        seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
+        with perf_execution("_AsyncLLMEngine.step_async.schedule".rjust(60, ' ')):
+            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
@@ -200,7 +203,8 @@ class _AsyncLLMEngine(LLMEngine):
         else:
             output = []
 
-        return self._process_model_outputs(output, scheduler_outputs)
+        with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
+            return self._process_model_outputs(output, scheduler_outputs)
 
     async def encode_request_async(
         self,
@@ -387,8 +391,11 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()
         else:
-            request_outputs = await self.engine.step_async()
+            with perf_execution("AsyncLLMEngine.engine_step.step_async".rjust(60, ' ')):
+                request_outputs = await self.engine.step_async()
 
+        # if request_outputs[0].finished:
+        #     print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
             self._request_tracker.process_request_output(
@@ -408,7 +415,9 @@ class AsyncLLMEngine:
         while True:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
-            has_requests_in_progress = await self.engine_step()
+            with perf_execution("AsyncLLMEngine.run_engine_loop.engine_step".rjust(60, ' ')):
+                has_requests_in_progress = await self.engine_step()
+            print("\n", file=sys.stderr)
             await asyncio.sleep(0)
 
     async def add_request(

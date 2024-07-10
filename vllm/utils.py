@@ -1,5 +1,7 @@
 import enum
 import os
+import sys
+from contextlib import contextmanager
 import socket
 import subprocess
 import uuid
@@ -112,6 +114,19 @@ class LRUCache:
         while len(self.cache) > 0:
             self.remove_oldest()
         self.cache.clear()
+
+@contextmanager
+def perf_execution(perf_item):
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    start_event.record()
+
+    yield
+
+    end_event.record()
+    torch.cuda.synchronize()
+    elapsed_time_ms = start_event.elapsed_time(end_event)
+    print(f"{perf_item}: {elapsed_time_ms} ms", file=sys.stderr)
 
 
 def is_hip() -> bool:

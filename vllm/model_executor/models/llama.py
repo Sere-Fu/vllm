@@ -46,6 +46,7 @@ from vllm.model_executor.weight_utils import (default_weight_loader,
                                               hf_model_weights_iterator)
 from vllm.sequence import SamplerOutput
 from vllm.config import LoRAConfig
+from vllm.utils import perf_execution
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]
 
@@ -206,17 +207,19 @@ class LlamaDecoderLayer(nn.Module):
         else:
             hidden_states, residual = self.input_layernorm(
                 hidden_states, residual)
-        hidden_states = self.self_attn(
-            positions=positions,
-            hidden_states=hidden_states,
-            kv_cache=kv_cache,
-            input_metadata=input_metadata,
-        )
+        with perf_execution("Llama.attn".rjust(60, ' ')):
+            hidden_states = self.self_attn(
+                positions=positions,
+                hidden_states=hidden_states,
+                kv_cache=kv_cache,
+                input_metadata=input_metadata,
+            )
 
         # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(
-            hidden_states, residual)
-        hidden_states = self.mlp(hidden_states)
+        with perf_execution("Llama.mlp".rjust(60, ' ')):
+            hidden_states, residual = self.post_attention_layernorm(
+                hidden_states, residual)
+            hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
 
@@ -302,8 +305,9 @@ class LlamaForCausalLM(nn.Module):
         kv_caches: List[KVCache],
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
-        hidden_states = self.model(input_ids, positions, kv_caches,
-                                   input_metadata)
+        with perf_execution("Llama.forward".rjust(60, ' ')):
+            hidden_states = self.model(input_ids, positions, kv_caches,
+                                    input_metadata)
         return hidden_states
 
     def sample(
