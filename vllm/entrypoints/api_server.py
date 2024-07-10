@@ -127,6 +127,8 @@ async def decode(request: Request) -> Response:
 
         # engine.irecv_reqs = []
         engine.receive_kv_cache_tasks = []
+        engine.engine.scheduler.pre_running.append([seq_group for seq_groups in engine.pre_running_requests for seq_group in seq_groups])
+        engine.pre_running_requests.clear()
         engine._request_tracker.new_requests_event.set()
 
     ret = {"output":  "ack"}

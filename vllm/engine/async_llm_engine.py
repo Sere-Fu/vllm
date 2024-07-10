@@ -3,6 +3,7 @@ import time
 import aiohttp
 import json
 import torch
+import sys
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
@@ -206,6 +207,7 @@ class _AsyncLLMEngine(LLMEngine):
             # self.scheduler.decode_remote_task = asyncio.create_task(self.decode_remote(seq_group_metadata_list))
             # self.scheduler.decode_remote_task.add_done_callback(self.wrapper.decode_remote_callback)
             bts = await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
+            print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
             for seq_group_metadata in seq_group_metadata_list:
                 seq_group_metadata.block_tables = bts.pop(0)
 
@@ -219,6 +221,7 @@ class _AsyncLLMEngine(LLMEngine):
                         "to_rank": 1,
                     })
             else:
+                print("scheduled decode:", len(scheduler_outputs.scheduled_seq_groups))
                 all_outputs = await self._run_workers_async(
                     "execute_model",
                     driver_kwargs={
@@ -516,8 +519,6 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()
         else:
-            if get_engine_type() == EngineType.DECODING:
-                pass # pre-running -> running
             request_outputs = await self.engine.step_async()
 
         # Put the outputs into the corresponding streams.
@@ -528,7 +529,7 @@ class AsyncLLMEngine:
                     request_output, verbose=self.log_requests)
             else:
                 if request_output.finished:
-                    print(len(request_output.outputs[0].token_ids))
+                    print(time.perf_counter(), file=sys.stderr)
 
         if get_engine_type() == EngineType.PREFILL:
             return self.engine.scheduler.waiting
@@ -564,8 +565,8 @@ class AsyncLLMEngine:
         while True:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
-                self.engine.scheduler.running.extend([seq_group for seq_groups in self.pre_running_requests for seq_group in seq_groups])
-                self.pre_running_requests.clear()
+                # self.engine.scheduler.running.extend([seq_group for seq_groups in self.pre_running_requests for seq_group in seq_groups])
+                # self.pre_running_requests.clear()
                 self._request_tracker.new_requests_event.clear()
             has_requests_in_progress = await self.engine_step()
             await asyncio.sleep(0)

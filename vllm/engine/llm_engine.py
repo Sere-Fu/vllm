@@ -344,7 +344,7 @@ class LLMEngine:
         #     cpu_swap_space=self.cache_config.swap_space_bytes,
         #     cache_dtype=self.cache_config.cache_dtype,
         # )
-        num_blocks = [(3000, 400)]
+        num_blocks = [(2800, 400)]
 
         # Since we use a shared centralized controller, we take the minimum
         # number of blocks across all workers to make sure all the memory
