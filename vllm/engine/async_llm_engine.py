@@ -1,6 +1,7 @@
 import asyncio
 import time
 from functools import partial
+import sys
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
 
@@ -185,6 +186,8 @@ class _AsyncLLMEngine(LLMEngine):
         seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
 
         if not scheduler_outputs.is_empty():
+            if not seq_group_metadata_list[0].is_prompt:
+                print("scheduled decode:", time.perf_counter(), file=sys.stderr)
             # Execute the model.
             all_outputs = await self._run_workers_async(
                 "execute_model",
@@ -389,6 +392,8 @@ class AsyncLLMEngine:
         else:
             request_outputs = await self.engine.step_async()
 
+        if request_outputs[0].finished:
+            print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
             self._request_tracker.process_request_output(
