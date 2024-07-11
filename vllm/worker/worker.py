@@ -19,6 +19,7 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
+from vllm.utils import perf_execution
 
 
 class Worker:
@@ -217,8 +218,9 @@ class Worker:
         if num_seq_groups == 0:
             return {}
 
-        output = self.model_runner.execute_model(seq_group_metadata_list,
-                                                 self.gpu_cache)
+        with perf_execution("Worker.execute_model.execute_model".rjust(60, ' ')):
+            output = self.model_runner.execute_model(seq_group_metadata_list,
+                                                    self.gpu_cache)
         return output
 
     @torch.inference_mode()

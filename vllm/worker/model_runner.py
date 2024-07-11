@@ -16,7 +16,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.utils import in_wsl, coalesce_blocks
+from vllm.utils import in_wsl, coalesce_blocks, perf_execution
 
 logger = init_logger(__name__)
 
@@ -546,10 +546,12 @@ class ModelRunner:
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
     ) -> Optional[SamplerOutput]:
-        (input_tokens, input_positions, input_metadata, sampling_metadata,
-         lora_requests,
-         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, -1)
+        with perf_execution("ModelRunner.execute_model.prepare_input_tensors".rjust(60, ' ')):
+            (input_tokens, input_positions, input_metadata, sampling_metadata,
+            lora_requests,
+            lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, -1)
 
+        assert not self.lora_config
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)
 
@@ -559,18 +561,21 @@ class ModelRunner:
             model_executable = self.graph_runners[graph_batch_size]
         else:
             model_executable = self.model
-        hidden_states = model_executable(
-            input_ids=input_tokens,
-            positions=input_positions,
-            kv_caches=kv_caches,
-            input_metadata=input_metadata,
-        )
+
+        with perf_execution("ModelRunner.execute_model.forward".rjust(60, ' ')):
+            hidden_states = model_executable(
+                input_ids=input_tokens,
+                positions=input_positions,
+                kv_caches=kv_caches,
+                input_metadata=input_metadata,
+            )
 
         # Sample the next token.
-        output = self.model.sample(
-            hidden_states=hidden_states,
-            sampling_metadata=sampling_metadata,
-        )
+        with perf_execution("ModelRunner.execute_model.sample".rjust(60, ' ')):
+            output = self.model.sample(
+                hidden_states=hidden_states,
+                sampling_metadata=sampling_metadata,
+            )
         return output
 
     @torch.inference_mode()

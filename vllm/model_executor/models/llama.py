@@ -46,6 +46,7 @@ from vllm.model_executor.weight_utils import (default_weight_loader,
                                               hf_model_weights_iterator)
 from vllm.sequence import SamplerOutput
 from vllm.config import LoRAConfig
+from vllm.utils import perf_execution
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]
 
@@ -302,8 +303,9 @@ class LlamaForCausalLM(nn.Module):
         kv_caches: List[KVCache],
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
-        hidden_states = self.model(input_ids, positions, kv_caches,
-                                   input_metadata)
+        with perf_execution("Llama.forward".rjust(60, ' ')):
+            hidden_states = self.model(input_ids, positions, kv_caches,
+                                    input_metadata)
         return hidden_states
 
     def sample(

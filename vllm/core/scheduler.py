@@ -474,7 +474,7 @@ class Scheduler:
     def _schedule_decode(self) -> SchedulerOutputs:
         if not self.running:
             if self.pre_running:
-                print("pre_running loaded:", time.perf_counter(), file=sys.stderr)
+                # print("pre_running loaded:", time.perf_counter(), file=sys.stderr)
                 self.running.extend(self.pre_running.pop(0))
         # Blocks that need to be swaped or copied before model execution.
         blocks_to_copy: Dict[int, List[int]] = {}

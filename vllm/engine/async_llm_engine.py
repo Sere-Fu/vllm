@@ -18,7 +18,7 @@ from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SequenceGroupMetadata, SequenceGroup
-from vllm.utils import marshalToB64String, unmarshalFromB64String, coalesce_blocks
+from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution
 
 logger = init_logger(__name__)
 
@@ -197,7 +197,8 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("prefill")
         elif get_engine_type() == EngineType.DECODING:
-            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
+            with perf_execution("_AsyncLLMEngine.step_async.schedule".rjust(60, ' ')):
+                seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
         elif get_engine_type() == EngineType.MIXED:
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("mixed")
         else:
@@ -207,7 +208,7 @@ class _AsyncLLMEngine(LLMEngine):
             # self.scheduler.decode_remote_task = asyncio.create_task(self.decode_remote(seq_group_metadata_list))
             # self.scheduler.decode_remote_task.add_done_callback(self.wrapper.decode_remote_callback)
             bts = await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
-            print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
+            # print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
             for seq_group_metadata in seq_group_metadata_list:
                 seq_group_metadata.block_tables = bts.pop(0)
 
@@ -221,7 +222,7 @@ class _AsyncLLMEngine(LLMEngine):
                         "to_rank": 1,
                     })
             else:
-                print("scheduled decode:", time.perf_counter(), file=sys.stderr)
+                # print("scheduled decode:", time.perf_counter(), file=sys.stderr)
                 all_outputs = await self._run_workers_async(
                     "execute_model",
                     driver_kwargs={
@@ -241,7 +242,8 @@ class _AsyncLLMEngine(LLMEngine):
             await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
             return res
         else:
-            return self._process_model_outputs(output, scheduler_outputs)
+            with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
+                return self._process_model_outputs(output, scheduler_outputs)
 
     async def notify_decode_worker_to_receive_kv_cache(self, seq_groups: List[SequenceGroup]) -> None:
         # to_receive = coalesce_blocks([block
@@ -499,8 +501,9 @@ class AsyncLLMEngine:
         Returns True if there are in-progress requests."""
 
         if get_engine_type() == EngineType.DECODING:
-            new_requests, finished_requests = (
-                self._request_tracker.get_new_and_finished_requests(False))
+            with perf_execution("AsyncLLMEngine.engine_step.get_new_and_finished_requests".rjust(60, ' ')):
+                new_requests, finished_requests = (
+                    self._request_tracker.get_new_and_finished_requests(False))
         else:
             new_requests, finished_requests = (
                 self._request_tracker.get_new_and_finished_requests(True))
@@ -519,10 +522,11 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()
         else:
-            request_outputs = await self.engine.step_async()
+            with perf_execution("AsyncLLMEngine.engine_step.step_async".rjust(60, ' ')):
+                request_outputs = await self.engine.step_async()
 
-        if request_outputs[0].finished:
-            print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
+        # if request_outputs[0].finished:
+            # print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
 
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
@@ -568,7 +572,9 @@ class AsyncLLMEngine:
                 # self.engine.scheduler.running.extend([seq_group for seq_groups in self.pre_running_requests for seq_group in seq_groups])
                 # self.pre_running_requests.clear()
                 self._request_tracker.new_requests_event.clear()
-            has_requests_in_progress = await self.engine_step()
+            with perf_execution("AsyncLLMEngine.run_engine_loop.engine_step".rjust(60, ' ')):
+                has_requests_in_progress = await self.engine_step()
+            print("\n", file=sys.stderr)
             await asyncio.sleep(0)
 
     async def add_request(
