@@ -427,6 +427,7 @@ class AsyncLLMEngine:
         self.irecv_reqs: List[List[asyncio.Future]] = []
 
         self.irecv_executor = ThreadPoolExecutor(max_workers=1)
+        self.io_stream = torch.cuda.Stream()
 
     @property
     def is_running(self) -> bool:
@@ -481,13 +482,14 @@ class AsyncLLMEngine:
     def receive_kv_cache(self, from_rank: int, to_receive: List[Tuple[int, int]]):
         assert get_engine_type() == EngineType.DECODING
 
-        reqs = []
-        for key_cache, value_cache in self.engine.driver_worker.cache_engine.gpu_cache:
-            for (start, l) in to_receive:
-                # print(f"recv {start} {l}")
-                reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
-                reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
-        return reqs
+        with torch.cuda.stream(self.io_stream):
+            reqs = []
+            for key_cache, value_cache in self.engine.driver_worker.cache_engine.gpu_cache:
+                for (start, l) in to_receive:
+                    # print(f"recv {start} {l}")
+                    reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
+                    reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
+            return reqs
 
     # def handle_irecv_reqs(self, task: asyncio.Task):
     #     irecv_reqs = task.result()
