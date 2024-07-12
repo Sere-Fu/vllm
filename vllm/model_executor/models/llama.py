@@ -243,10 +243,11 @@ class LlamaModel(nn.Module):
             config.hidden_size,
             org_num_embeddings=config.vocab_size,
         )
-        self.layers = nn.ModuleList([
-            LlamaDecoderLayer(config, linear_method)
-            for _ in range(config.num_hidden_layers)
-        ])
+        with perf_execution("Llama.all_layers".rjust(60, ' ')):
+            self.layers = nn.ModuleList([
+                LlamaDecoderLayer(config, linear_method)
+                for _ in range(config.num_hidden_layers)
+            ])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
