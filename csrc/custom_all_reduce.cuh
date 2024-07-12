@@ -41,7 +41,7 @@ struct Metadata {
 static_assert(offsetof(Metadata, counter) == 128);
 static_assert(sizeof(Metadata) == 256);
 
-struct __align__(16) RankData { const void *__restrict__ ptrs[8]; };
+struct __align__(16) RankData { const void * ptrs[8]; };
 
 struct RankSignals {
   volatile Signal *signals[8];
