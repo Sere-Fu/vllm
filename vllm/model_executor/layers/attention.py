@@ -67,6 +67,8 @@ class PagedAttention(nn.Module):
         value: torch.Tensor,
         key_cache: Optional[torch.Tensor],
         value_cache: Optional[torch.Tensor],
+        key_transfer_cache: Optional[torch.Tensor],
+        value_transfer_cache: Optional[torch.Tensor],
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
         """PagedAttention forward pass.
@@ -103,13 +105,19 @@ class PagedAttention(nn.Module):
                 input_metadata.kv_cache_dtype,
             )
 
+        # with torch.cuda.stream(input_metadata.transfer_stream):
         if input_metadata.to_rank != -1:
             assert input_metadata.is_prompt
-            assert input_metadata.to_send is not None
-            for start, l in input_metadata.to_send:
-                # print(f"send {start} {l}")
-                torch.distributed.isend(key_cache[start: start+l], input_metadata.to_rank)
-                torch.distributed.isend(value_cache[start: start+l], input_metadata.to_rank)
+            assert input_metadata.send_reqs is not None
+
+            # print(f"isend {key_transfer_cache.shape}")
+            # input_metadata.send_reqs.append(torch.distributed.isend(key_transfer_cache, input_metadata.to_rank))
+            # torch.distributed.isend(key_transfer_cache, input_metadata.to_rank)
+            torch.distributed.isend(key_cache[2:3], input_metadata.to_rank)
+            # print(f"isend {value_transfer_cache.shape}")
+            # input_metadata.send_reqs.append(torch.distributed.isend(value_transfer_cache, input_metadata.to_rank))
+            # torch.distributed.isend(value_transfer_cache, input_metadata.to_rank)
+            print(f"isend done")
 
         if input_metadata.is_prompt:
             # Prompt run.

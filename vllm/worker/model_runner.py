@@ -75,6 +75,9 @@ class ModelRunner:
         self.in_wsl = in_wsl()
         self.kv_cache_dtype = kv_cache_dtype
 
+        self.transfer_stream = torch.cuda.Stream()
+        assert self.transfer_stream != torch.cuda.current_stream()
+
     def load_model(self) -> None:
         self.model = get_model(self.model_config, self.device_config,
                                self.lora_config)
@@ -528,13 +531,31 @@ class ModelRunner:
 
         if to_rank != -1:
             assert seq_group_metadata_list[0].block_tables is not None
-            input_metadata.to_send = coalesce_blocks([block
-                                                      for seq_group_metadata in seq_group_metadata_list
-                                                      for blocks in seq_group_metadata.block_tables.values()
-                                                      for block in blocks])
+            # input_metadata.to_send = coalesce_blocks([block
+            #                                           for seq_group_metadata in seq_group_metadata_list
+            #                                           for blocks in seq_group_metadata.block_tables.values()
+            #                                           for block in blocks])
             input_metadata.to_rank = to_rank
+            # input_metadata.send_buffers = [torch.empty_like((101, 61, 1024)) for _ in range(64)]
+            input_metadata.send_reqs = []
+            input_metadata.transfer_stream = self.transfer_stream
+
+
+            # for _ in range(64):
+            #     input_metadata.send_buffers.append(torch.empty(
+            #         size=(101, 61, 1024),
+            #         dtype=torch.float16,
+            #         device="cuda",
+            #     ))
+            # input_metadata.value_buffers_to_send = torch.empty(
+            #     size=(101, 61, 1024),
+            #     dtype=self.kv_cache_dtype,
+            #     device="cuda",
+            # )
         else:
-            input_metadata.to_send = []
+            # input_metadata.to_send = []
+            # input_metadata.send_buffers = []
+            input_metadata.send_reqs = []
             input_metadata.to_rank = -1
 
         return (input_tokens, input_positions, input_metadata,
@@ -583,6 +604,7 @@ class ModelRunner:
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
+        transfer_caches: List[Tuple[torch.Tensor, torch.Tensor]],
         to_rank: int,
     ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
@@ -602,6 +624,7 @@ class ModelRunner:
             input_ids=input_tokens,
             positions=input_positions,
             kv_caches=kv_caches,
+            transfer_caches=transfer_caches,
             input_metadata=input_metadata,
         )
 
@@ -610,6 +633,11 @@ class ModelRunner:
             hidden_states=hidden_states,
             sampling_metadata=sampling_metadata,
         )
+
+        # while input_metadata.send_reqs:
+        #     req = input_metadata.send_reqs.pop(0)
+        #     req.wait()
+
         return output
 
     @torch.inference_mode()

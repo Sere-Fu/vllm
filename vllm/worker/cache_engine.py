@@ -47,10 +47,15 @@ class CacheEngine:
         # Initialize the cache.
         self.gpu_cache = self.allocate_gpu_cache()
         self.cpu_cache = self.allocate_cpu_cache()
+        self.transfer_cache = self.allocate_transfer_cache()
 
         # Initialize the stream for caching operations.
         self.cache_stream = torch.cuda.Stream()
         assert self.cache_stream != torch.cuda.current_stream()
+
+        # self.transfer_stream = torch.cuda.Stream()
+        # assert self.transfer_stream != torch.cuda.current_stream()
+
         # Initialize the events for stream synchronization.
         self.events = [torch.cuda.Event() for _ in range(self.num_layers)]
 
@@ -88,6 +93,22 @@ class CacheEngine:
             )
             gpu_cache.append((key_blocks, value_blocks))
         return gpu_cache
+
+    def allocate_transfer_cache(self) -> List[KVCache]:
+        transfer_cache: List[KVCache] = []
+        for _ in range(self.num_layers):
+            key_blocks = torch.empty(
+                size=(101,61,1024),
+                dtype=self.dtype,
+                device="cuda",
+            )
+            value_blocks = torch.empty(
+                size=(101,61,1024),
+                dtype=self.dtype,
+                device="cuda",
+            )
+            transfer_cache.append((key_blocks, value_blocks))
+        return transfer_cache
 
     def allocate_cpu_cache(self) -> List[KVCache]:
         cpu_cache: List[KVCache] = []

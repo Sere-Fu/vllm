@@ -82,27 +82,28 @@ async def receive_kv_cache(request: Request) -> Response:
         engine.start_background_loop()
     request_dict = await request.json()
     from_rank = request_dict.pop("from_rank")
-    seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
+    num_tokens = request_dict.pop("num_tokens")
 
-    bts = []
-    for seq_group in seq_groups:
-        for seq in seq_group.get_seqs():
-            seq.status = SequenceStatus.WAITING
-        engine.engine.scheduler._allocate(seq_group)
-        block_tables: Dict[int, List[int]] = {}
-        for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
-            seq_id = seq.seq_id
-            block_tables[seq_id] = engine.engine.scheduler.block_manager.get_block_table(seq)
-            bts.append(block_tables)
+    # bts = []
+    # for seq_group in seq_groups:
+    #     for seq in seq_group.get_seqs():
+    #         seq.status = SequenceStatus.WAITING
+    #     engine.engine.scheduler._allocate(seq_group)
+    #     block_tables: Dict[int, List[int]] = {}
+    #     for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
+    #         seq_id = seq.seq_id
+    #         block_tables[seq_id] = engine.engine.scheduler.block_manager.get_block_table(seq)
+    #         bts.append(block_tables)
 
-    to_receive = coalesce_blocks([block
-                                    for block_tables in bts
-                                    for blocks in block_tables.values()
-                                    for block in blocks ])
+    # to_receive = coalesce_blocks([block
+    #                                 for block_tables in bts
+    #                                 for blocks in block_tables.values()
+    #                                 for block in blocks ])
 
-    await engine.create_receive_kv_cache_task(from_rank, to_receive)
+    await engine.create_receive_kv_cache_task(from_rank, num_tokens)
 
-    ret = {"encoded_bts": marshalToB64String(bts)}
+    # ret = {"encoded_bts": marshalToB64String(bts)}
+    ret = {"output": "ack"}
     return JSONResponse(ret)
 
 @app.post("/decode")

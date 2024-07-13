@@ -149,6 +149,7 @@ class Worker:
                                         self.parallel_config)
         self.cache_events = self.cache_engine.events
         self.gpu_cache = self.cache_engine.gpu_cache
+        self.transfer_cache = self.cache_engine.transfer_cache
         self.model_runner.set_block_size(self.cache_engine.block_size)
 
     def warm_up_model(self) -> None:
@@ -246,6 +247,7 @@ class Worker:
 
         output = self.model_runner.prefill(seq_group_metadata_list,
                                                 self.gpu_cache,
+                                                self.transfer_cache,
                                                  to_rank)
         return output
 
