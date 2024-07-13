@@ -499,18 +499,24 @@ class AsyncLLMEngine:
             for i in range(num_layers):
                 # print(f"irecv {self.engine.driver_worker.transfer_cache[i][0][:num_blocks].shape}")
                 # reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.transfer_cache[i][0][:num_blocks], src=from_rank))
-                m0 = time.perf_counter()
-                reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.gpu_cache[i][0][:num_blocks], src=from_rank))
-                m1 = time.perf_counter()
-                if m1 - m0 > 0.02:
-                    print(f"long recv takes {m1-m0}", file=sys.stderr)
+                # m0 = time.perf_counter()
+                self.engine.driver_worker.cache_engine.gpu_cache[i][0][:num_blocks].copy_(
+                    self.engine.driver_worker.cache_engine.cpu_cache[i][0][:num_blocks], non_blocking=False
+                )
+                self.engine.driver_worker.cache_engine.gpu_cache[i][1][:num_blocks].copy_(
+                    self.engine.driver_worker.cache_engine.cpu_cache[i][1][:num_blocks], non_blocking=False
+                )
+                # m1 = time.perf_counter()
+                # if m1 - m0 > 0.02:
+                #     print(f"long recv takes {m1-m0}", file=sys.stderr)
                 # print(f"irecv {self.engine.driver_worker.transfer_cache[i][1][:num_blocks].shape}")
                 # reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.transfer_cache[i][1][:num_blocks], src=from_rank))
-                reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.gpu_cache[i][1][:num_blocks], src=from_rank))
-                m2 = time.perf_counter()
-                if m2 - m1 > 0.02:
-                    print(f"long recv takes {m2-m1}", file=sys.stderr)
+                # reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.gpu_cache[i][1][:num_blocks], src=from_rank))
+                # m2 = time.perf_counter()
+                # if m2 - m1 > 0.02:
+                #     print(f"long recv takes {m2-m1}", file=sys.stderr)
                 # print(f"irecv done")
+
             return reqs
             # return reqs, keys_buffer, values_buffer
 

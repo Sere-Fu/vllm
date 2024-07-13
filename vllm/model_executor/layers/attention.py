@@ -115,13 +115,15 @@ class PagedAttention(nn.Module):
             # input_metadata.send_reqs.append(torch.distributed.isend(key_transfer_cache, input_metadata.to_rank))
             # torch.distributed.isend(key_transfer_cache, input_metadata.to_rank)
             # print(f"isend {key_cache[:404].shape}")
-            input_metadata.send_reqs.append(torch.distributed.isend(key_cache[:404], input_metadata.to_rank))
+            # input_metadata.send_reqs.append(torch.distributed.isend(key_cache[:404], input_metadata.to_rank))
             # print(f"isend {value_cache[:404].shape}")
-            input_metadata.send_reqs.append(torch.distributed.isend(value_cache[:404], input_metadata.to_rank))
+            # input_metadata.send_reqs.append(torch.distributed.isend(value_cache[:404], input_metadata.to_rank))
             # print(f"isend {value_transfer_cache.shape}")
             # input_metadata.send_reqs.append(torch.distributed.isend(value_transfer_cache, input_metadata.to_rank))
             # torch.distributed.isend(value_transfer_cache, input_metadata.to_rank)
             # print(f"isend done")
+            key_transfer_cache[:200].copy_(key_cache[:200], non_blocking=False)
+            value_transfer_cache[:200].copy_(value_cache[:200], non_blocking=False)
 
         if input_metadata.is_prompt:
             # Prompt run.
