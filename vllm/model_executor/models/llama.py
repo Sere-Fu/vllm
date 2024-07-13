@@ -207,19 +207,17 @@ class LlamaDecoderLayer(nn.Module):
         else:
             hidden_states, residual = self.input_layernorm(
                 hidden_states, residual)
-        with perf_execution("Llama.attn".rjust(60, ' ')):
-            hidden_states = self.self_attn(
-                positions=positions,
-                hidden_states=hidden_states,
-                kv_cache=kv_cache,
-                input_metadata=input_metadata,
-            )
+        hidden_states = self.self_attn(
+            positions=positions,
+            hidden_states=hidden_states,
+            kv_cache=kv_cache,
+            input_metadata=input_metadata,
+        )
 
         # Fully Connected
-        with perf_execution("Llama.mlp".rjust(60, ' ')):
-            hidden_states, residual = self.post_attention_layernorm(
-                hidden_states, residual)
-            hidden_states = self.mlp(hidden_states)
+        hidden_states, residual = self.post_attention_layernorm(
+            hidden_states, residual)
+        hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
 

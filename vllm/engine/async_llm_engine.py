@@ -222,7 +222,7 @@ class _AsyncLLMEngine(LLMEngine):
                         "to_rank": 1,
                     })
             else:
-                # print("scheduled decode:", time.perf_counter(), file=sys.stderr)
+                print("scheduled decode:", time.perf_counter(), file=sys.stderr)
                 all_outputs = await self._run_workers_async(
                     "execute_model",
                     driver_kwargs={
@@ -527,8 +527,9 @@ class AsyncLLMEngine:
             with perf_execution("AsyncLLMEngine.engine_step.step_async".rjust(60, ' ')):
                 request_outputs = await self.engine.step_async()
 
-        # if request_outputs[0].finished:
-            # print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
+        if request_outputs:
+            if request_outputs[0].finished:
+                print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
 
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
