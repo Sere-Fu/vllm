@@ -583,11 +583,15 @@ class ModelRunner:
         else:
             model_executable = self.model
 
+        num_layers = self.model_config.get_num_layers(self.parallel_config)
+        transfer_caches = [(None, None)] * num_layers
+
         with perf_execution("ModelRunner.execute_model.forward".rjust(60, ' ')):
             hidden_states = model_executable(
                 input_ids=input_tokens,
                 positions=input_positions,
                 kv_caches=kv_caches,
+                transfer_caches=transfer_caches,
                 input_metadata=input_metadata,
             )
 

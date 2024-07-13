@@ -96,14 +96,16 @@ class CacheEngine:
 
     def allocate_transfer_cache(self) -> List[KVCache]:
         transfer_cache: List[KVCache] = []
+        key_block_shape = self.get_key_block_shape()
+        value_block_shape = self.get_value_block_shape()
         for _ in range(self.num_layers):
             key_blocks = torch.empty(
-                size=(101,61,1024),
+                size=(2, *key_block_shape),
                 dtype=self.dtype,
                 device="cuda",
             )
             value_blocks = torch.empty(
-                size=(101,61,1024),
+                size=(2, *value_block_shape),
                 dtype=self.dtype,
                 device="cuda",
             )

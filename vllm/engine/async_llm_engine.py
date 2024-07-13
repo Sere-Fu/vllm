@@ -197,8 +197,8 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("prefill")
         elif get_engine_type() == EngineType.DECODING:
-            with perf_execution("_AsyncLLMEngine.step_async.schedule".rjust(60, ' ')):
-                seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
+            # with perf_execution("_AsyncLLMEngine.step_async.schedule".rjust(60, ' ')):
+            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
         elif get_engine_type() == EngineType.MIXED:
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("mixed")
         else:
@@ -209,10 +209,9 @@ class _AsyncLLMEngine(LLMEngine):
             # self.scheduler.decode_remote_task.add_done_callback(self.wrapper.decode_remote_callback)
 
             # max_prompt_len = seq_group_metadata_list[0].
-            max_prompt_len = max([len(seq_group.seqs_dict[seq_group.get_seqs()[0].seq_id].data.prompt_token_ids)
-                                  for seq_group in scheduler_outputs.scheduled_seq_groups])
-            num_tokens = len(seq_group_metadata_list) * max_prompt_len
-            await self.notify_decode_worker_to_receive_kv_cache(num_tokens)
+            # max_prompt_len = max([len(seq_group.seqs_dict[seq_group.get_seqs()[0].seq_id].data.prompt_token_ids)
+            #                       for seq_group in scheduler_outputs.scheduled_seq_groups])
+            num_blocks = await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
 
             # print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
 
@@ -252,14 +251,14 @@ class _AsyncLLMEngine(LLMEngine):
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
                 return self._process_model_outputs(output, scheduler_outputs)
 
-    async def notify_decode_worker_to_receive_kv_cache(self, num_tokens: int) -> None:
+    async def notify_decode_worker_to_receive_kv_cache(self, seq_groups: List[SequenceGroup]) -> None:
         # to_receive = coalesce_blocks([block
         #                                 for seq_group_metadata in seq_group_metadata_list
         #                                 for blocks in seq_group_metadata.block_tables.values()
         #                                 for block in blocks ])
         pload = {
             "from_rank": torch.distributed.get_rank(),
-            "num_tokens": num_tokens,
+            "encoded_seq_groups": marshalToB64String(seq_groups),
         }
 
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
@@ -279,7 +278,7 @@ class _AsyncLLMEngine(LLMEngine):
                 if "error" not in output:
                     break
 
-        # return unmarshalFromB64String(output['encoded_bts'])
+        return output['num_blocks']
 
     async def decode_remote(self,
                             seq_groups: List[SequenceGroup]) -> Any:
@@ -480,36 +479,38 @@ class AsyncLLMEngine:
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
 
-    async def create_receive_kv_cache_task(self, from_rank: int, num_tokens: int) -> None:
+    async def create_receive_kv_cache_task(self, from_rank: int, num_blocks: int) -> None:
         # task = asyncio.get_event_loop().run_in_executor(self.irecv_executor, partial(self.receive_kv_cache, from_rank, to_receive))
         print("to submit kv transfer task")
-        task = self.irecv_executor.submit(partial(self.receive_kv_cache, from_rank, num_tokens))
+        task = self.irecv_executor.submit(partial(self.receive_kv_cache, from_rank, num_blocks))
         print("submited kv transfer task")
         # task.add_done_callback(self.handle_irecv_reqs)
         self.receive_kv_cache_tasks.append(task)
 
-    def receive_kv_cache(self, from_rank: int, num_tokens: int):
+    def receive_kv_cache(self, from_rank: int, num_blocks: int):
         assert get_engine_type() == EngineType.DECODING
-        print("start irecv task")
-        kv_size = (num_tokens,
-                   self.engine.model_config.get_num_kv_heads,
-                   self.engine.model_config.get_head_size)
-        # kv_size = (num_tokens/61,
-        #            61,
-        #            self.engine.model_config.get_num_kv_heads * self.engine.model_config.get_head_size)
-        kv_dtype = self.engine.cache_config.cache_dtype
+        # print("start irecv task")
+        print(num_blocks)
+
         num_layers = self.engine.model_config.get_num_layers(self.engine.parallel_config)
 
         with torch.cuda.stream(self.io_stream):
-            keys_buffer = [torch.empty(kv_size, kv_dtype) for _ in range(num_layers)]
-            values_buffer = [torch.empty(kv_size, kv_dtype) for _ in range(num_layers)]
             reqs = []
             for i in range(num_layers):
-                print(f"irecv {keys_buffer[i].shape}")
-                reqs.append(torch.distributed.irecv(keys_buffer[i], src=from_rank))
-                print(f"irecv {keys_buffer[i].shape}")
-                reqs.append(torch.distributed.irecv(values_buffer[i], src=from_rank))
-                print(f"irecv done")
+                # print(f"irecv {self.engine.driver_worker.transfer_cache[i][0][:num_blocks].shape}")
+                # reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.transfer_cache[i][0][:num_blocks], src=from_rank))
+                m0 = time.perf_counter()
+                reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.gpu_cache[i][0][:num_blocks], src=from_rank))
+                m1 = time.perf_counter()
+                if m1 - m0 > 0.02:
+                    print(f"long recv takes {m1-m0}", file=sys.stderr)
+                # print(f"irecv {self.engine.driver_worker.transfer_cache[i][1][:num_blocks].shape}")
+                # reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.transfer_cache[i][1][:num_blocks], src=from_rank))
+                reqs.append(torch.distributed.irecv(self.engine.driver_worker.cache_engine.gpu_cache[i][1][:num_blocks], src=from_rank))
+                m2 = time.perf_counter()
+                if m2 - m1 > 0.02:
+                    print(f"long recv takes {m2-m1}", file=sys.stderr)
+                # print(f"irecv done")
             return reqs
             # return reqs, keys_buffer, values_buffer
 
@@ -525,9 +526,9 @@ class AsyncLLMEngine:
         Returns True if there are in-progress requests."""
 
         if get_engine_type() == EngineType.DECODING:
-            with perf_execution("AsyncLLMEngine.engine_step.get_new_and_finished_requests".rjust(60, ' ')):
-                new_requests, finished_requests = (
-                    self._request_tracker.get_new_and_finished_requests(False))
+            # with perf_execution("AsyncLLMEngine.engine_step.get_new_and_finished_requests".rjust(60, ' ')):
+            new_requests, finished_requests = (
+                self._request_tracker.get_new_and_finished_requests(False))
         else:
             new_requests, finished_requests = (
                 self._request_tracker.get_new_and_finished_requests(True))
@@ -546,8 +547,8 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()
         else:
-            with perf_execution("AsyncLLMEngine.engine_step.step_async".rjust(60, ' ')):
-                request_outputs = await self.engine.step_async()
+            # with perf_execution("AsyncLLMEngine.engine_step.step_async".rjust(60, ' ')):
+            request_outputs = await self.engine.step_async()
 
         if request_outputs:
             if request_outputs[0].finished:
@@ -597,8 +598,8 @@ class AsyncLLMEngine:
                 # self.engine.scheduler.running.extend([seq_group for seq_groups in self.pre_running_requests for seq_group in seq_groups])
                 # self.pre_running_requests.clear()
                 self._request_tracker.new_requests_event.clear()
-            with perf_execution("AsyncLLMEngine.run_engine_loop.engine_step".rjust(60, ' ')):
-                has_requests_in_progress = await self.engine_step()
+            # with perf_execution("AsyncLLMEngine.run_engine_loop.engine_step".rjust(60, ' ')):
+            has_requests_in_progress = await self.engine_step()
             print("\n", file=sys.stderr)
             await asyncio.sleep(0)
 

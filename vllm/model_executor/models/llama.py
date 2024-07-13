@@ -245,11 +245,11 @@ class LlamaModel(nn.Module):
             config.hidden_size,
             org_num_embeddings=config.vocab_size,
         )
-        with perf_execution("Llama.all_layers".rjust(60, ' ')):
-            self.layers = nn.ModuleList([
-                LlamaDecoderLayer(config, linear_method)
-                for _ in range(config.num_hidden_layers)
-            ])
+        # with perf_execution("Llama.all_layers".rjust(60, ' ')):
+        self.layers = nn.ModuleList([
+            LlamaDecoderLayer(config, linear_method)
+            for _ in range(config.num_hidden_layers)
+        ])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
@@ -311,9 +311,9 @@ class LlamaForCausalLM(nn.Module):
         transfer_caches: List[KVCache],
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
-        with perf_execution("Llama.forward".rjust(60, ' ')):
-            hidden_states = self.model(input_ids, positions, kv_caches, transfer_caches,
-                                    input_metadata)
+        # with perf_execution("Llama.forward".rjust(60, ' ')):
+        hidden_states = self.model(input_ids, positions, kv_caches, transfer_caches,
+                                input_metadata)
         return hidden_states
 
     def sample(

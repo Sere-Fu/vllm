@@ -96,14 +96,15 @@ class PagedAttention(nn.Module):
         # vectors will not be cached. This happens during the initial memory
         # profiling run.
         if key_cache is not None and value_cache is not None:
-            cache_ops.reshape_and_cache(
-                key,
-                value,
-                key_cache,
-                value_cache,
-                input_metadata.slot_mapping.flatten(),
-                input_metadata.kv_cache_dtype,
-            )
+            if not input_metadata.is_prompt:
+                cache_ops.reshape_and_cache(
+                    key,
+                    value,
+                    key_cache,
+                    value_cache,
+                    input_metadata.slot_mapping.flatten(),
+                    input_metadata.kv_cache_dtype,
+                )
 
         # with torch.cuda.stream(input_metadata.transfer_stream):
         if input_metadata.to_rank != -1:
@@ -113,11 +114,14 @@ class PagedAttention(nn.Module):
             # print(f"isend {key_transfer_cache.shape}")
             # input_metadata.send_reqs.append(torch.distributed.isend(key_transfer_cache, input_metadata.to_rank))
             # torch.distributed.isend(key_transfer_cache, input_metadata.to_rank)
-            torch.distributed.isend(key_cache[2:3], input_metadata.to_rank)
+            # print(f"isend {key_cache[:404].shape}")
+            torch.distributed.isend(key_cache[:404], input_metadata.to_rank)
+            # print(f"isend {value_cache[:404].shape}")
+            torch.distributed.isend(value_cache[:404], input_metadata.to_rank)
             # print(f"isend {value_transfer_cache.shape}")
             # input_metadata.send_reqs.append(torch.distributed.isend(value_transfer_cache, input_metadata.to_rank))
             # torch.distributed.isend(value_transfer_cache, input_metadata.to_rank)
-            print(f"isend done")
+            # print(f"isend done")
 
         if input_metadata.is_prompt:
             # Prompt run.
