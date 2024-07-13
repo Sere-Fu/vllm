@@ -1,8 +1,12 @@
 import enum
 import os
+import sys
+from contextlib import contextmanager
 import socket
 import subprocess
 import uuid
+import pickle
+import base64
 from platform import uname
 from typing import List, Tuple, Union
 from packaging.version import parse, Version
@@ -112,6 +116,19 @@ class LRUCache:
         while len(self.cache) > 0:
             self.remove_oldest()
         self.cache.clear()
+
+@contextmanager
+def perf_execution(perf_item):
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    start_event.record()
+
+    yield
+
+    end_event.record()
+    torch.cuda.synchronize()
+    elapsed_time_ms = start_event.elapsed_time(end_event)
+    print(f"{perf_item}: {elapsed_time_ms} ms", file=sys.stderr)
 
 
 def is_hip() -> bool:
@@ -276,3 +293,26 @@ def create_kv_caches_with_random(
             _generate_random_fp8_e5m2(value_cache, -scale, scale)
         value_caches.append(value_cache)
     return key_caches, value_caches
+
+def marshalToB64String(obj: Any) -> str:
+    return base64.b64encode(pickle.dumps(obj)).decode("utf-8")
+
+def unmarshalFromB64String(s: str) -> Any:
+    return pickle.loads(base64.b64decode(s.encode("utf-8")))
+
+def coalesce_blocks(block_list: List[int]) -> List[Tuple[int, int]]:
+    if not block_list:
+        return []
+    sorted_block_list = sorted(block_list)
+    ret = []
+    current_block_start = sorted_block_list[0]
+    current_block_length = 1
+    for i in range(1, len(sorted_block_list)):
+        if sorted_block_list[i] == sorted_block_list[i - 1] + 1:
+            current_block_length += 1
+        else:
+            ret.append((current_block_start, current_block_length))
+            current_block_start = sorted_block_list[i]
+            current_block_length = 1
+    ret.append((current_block_start, current_block_length))
+    return ret

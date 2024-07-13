@@ -16,7 +16,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.utils import in_wsl
+from vllm.utils import in_wsl, coalesce_blocks, perf_execution
 
 logger = init_logger(__name__)
 
@@ -74,6 +74,9 @@ class ModelRunner:
         # cache in_wsl result
         self.in_wsl = in_wsl()
         self.kv_cache_dtype = kv_cache_dtype
+
+        self.transfer_stream = torch.cuda.Stream()
+        assert self.transfer_stream != torch.cuda.current_stream()
 
     def load_model(self) -> None:
         self.model = get_model(self.model_config, self.device_config,
@@ -446,6 +449,7 @@ class ModelRunner:
     def prepare_input_tensors(
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
+        to_rank: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, InputMetadata, SamplingMetadata,
                Set[int], LoRAMapping]:
         if self.is_driver_worker:
@@ -525,6 +529,19 @@ class ModelRunner:
                 perform_sampling=False,
             )
 
+        if to_rank != -1:
+            assert seq_group_metadata_list[0].block_tables is not None
+            input_metadata.to_send = coalesce_blocks([block
+                                                      for seq_group_metadata in seq_group_metadata_list
+                                                      for blocks in seq_group_metadata.block_tables.values()
+                                                      for block in blocks])
+            input_metadata.to_rank = to_rank
+            input_metadata.transfer_stream = self.transfer_stream
+
+        else:
+            input_metadata.to_send = []
+            input_metadata.to_rank = -1
+
         return (input_tokens, input_positions, input_metadata,
                 sampling_metadata, lora_requests, lora_mapping)
 
@@ -534,9 +551,52 @@ class ModelRunner:
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
     ) -> Optional[SamplerOutput]:
+        with perf_execution("ModelRunner.execute_model.prepare_input_tensors".rjust(60, ' ')):
+            (input_tokens, input_positions, input_metadata, sampling_metadata,
+            lora_requests,
+            lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, -1)
+
+        if self.lora_config:
+            self.set_active_loras(lora_requests, lora_mapping)
+
+        # Execute the model.
+        if input_metadata.use_cuda_graph:
+            graph_batch_size = input_tokens.shape[0]
+            model_executable = self.graph_runners[graph_batch_size]
+        else:
+            model_executable = self.model
+
+        num_layers = self.model_config.get_num_layers(self.parallel_config)
+        transfer_caches = [(None, None)] * num_layers
+
+        with perf_execution("ModelRunner.execute_model.forward".rjust(60, ' ')):
+            hidden_states = model_executable(
+                input_ids=input_tokens,
+                positions=input_positions,
+                kv_caches=kv_caches,
+                transfer_caches=transfer_caches,
+                input_metadata=input_metadata,
+            )
+
+        # Sample the next token.
+        with perf_execution("ModelRunner.execute_model.sample".rjust(60, ' ')):
+            output = self.model.sample(
+                hidden_states=hidden_states,
+                sampling_metadata=sampling_metadata,
+            )
+        return output
+
+    @torch.inference_mode()
+    def prefill(
+        self,
+        seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
+        kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
+        transfer_caches: List[Tuple[torch.Tensor, torch.Tensor]],
+        to_rank: int,
+    ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
          lora_requests,
-         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list)
+         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, to_rank)
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)
@@ -551,6 +611,7 @@ class ModelRunner:
             input_ids=input_tokens,
             positions=input_positions,
             kv_caches=kv_caches,
+            transfer_caches=transfer_caches,
             input_metadata=input_metadata,
         )
 

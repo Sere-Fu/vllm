@@ -316,6 +316,7 @@ class AsyncEngineArgs(EngineArgs):
     engine_use_ray: bool = False
     disable_log_requests: bool = False
     max_log_len: Optional[int] = None
+    engine_type: Optional[str] = 'mixed'
 
     @staticmethod
     def add_cli_args(
@@ -334,4 +335,9 @@ class AsyncEngineArgs(EngineArgs):
                             help='max number of prompt characters or prompt '
                             'ID numbers being printed in log. '
                             'Default: unlimited.')
+        parser.add_argument(
+            '--engine-type',
+            type=str,
+            default=AsyncEngineArgs.engine_type,
+            help='engine type')
         return parser

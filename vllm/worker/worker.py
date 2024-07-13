@@ -18,6 +18,7 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
+from vllm.utils import perf_execution
 
 
 class Worker:
@@ -147,6 +148,7 @@ class Worker:
                                         self.parallel_config)
         self.cache_events = self.cache_engine.events
         self.gpu_cache = self.cache_engine.gpu_cache
+        self.cpu_cache = self.cache_engine.cpu_cache
         self.model_runner.set_block_size(self.cache_engine.block_size)
 
     def warm_up_model(self) -> None:
@@ -216,8 +218,36 @@ class Worker:
         if num_seq_groups == 0:
             return {}
 
-        output = self.model_runner.execute_model(seq_group_metadata_list,
-                                                 self.gpu_cache)
+        with perf_execution("Worker.execute_model.execute_model".rjust(60, ' ')):
+            output = self.model_runner.execute_model(seq_group_metadata_list,
+                                                    self.gpu_cache)
+        return output
+
+    @torch.inference_mode()
+    def prefill(
+        self,
+        seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None,
+        to_rank: Optional[int] = None,
+    ) -> Optional[SamplerOutput]:
+        if self.is_driver_worker:
+            assert seq_group_metadata_list is not None
+            num_seq_groups = len(seq_group_metadata_list)
+            data = {
+                "num_seq_groups": num_seq_groups,
+            }
+            broadcast_tensor_dict(data, src=0)
+        else:
+            data = broadcast_tensor_dict(src=0)
+            num_seq_groups = data["num_seq_groups"]
+
+        # If there is no input, we don't need to execute the model.
+        if num_seq_groups == 0:
+            return {}
+
+        output = self.model_runner.prefill(seq_group_metadata_list,
+                                                self.gpu_cache,
+                                                self.cpu_cache,
+                                                 to_rank)
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:

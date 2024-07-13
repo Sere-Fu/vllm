@@ -1,5 +1,9 @@
 import asyncio
 import time
+import aiohttp
+import json
+import torch
+import sys
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
@@ -7,11 +11,14 @@ from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
 from vllm.lora.request import LoRARequest
 from vllm.config import ModelConfig
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.engine.llm_engine import LLMEngine
+from concurrent.futures import ThreadPoolExecutor
+from vllm.engine.llm_engine import LLMEngine, EngineType, get_engine_type
 from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
+from vllm.sequence import SequenceGroupMetadata, SequenceGroup
+from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution
 
 logger = init_logger(__name__)
 
@@ -141,7 +148,7 @@ class RequestTracker:
 
         self._request_streams[request_id].finish()
 
-    def get_new_and_finished_requests(self) -> Tuple[List[Dict], Set[str]]:
+    def get_new_and_finished_requests(self, get_new: bool) -> Tuple[List[Dict], Set[str]]:
         """Get the new requests and finished requests to be
         sent to the engine."""
         new_requests: List[Dict] = []
@@ -152,16 +159,17 @@ class RequestTracker:
             finished_requests.add(request_id)
             self._request_streams.pop(request_id, None)
 
-        while not self._new_requests.empty():
-            stream, new_request = self._new_requests.get_nowait()
-            if stream.request_id in finished_requests:
-                # The request has already been aborted.
-                stream.finish()
-                continue
-            self._request_streams[stream.request_id] = stream
-            new_requests.append(new_request)
+        if get_new:
+            while not self._new_requests.empty():
+                stream, new_request = self._new_requests.get_nowait()
+                if stream.request_id in finished_requests:
+                    # The request has already been aborted.
+                    stream.finish()
+                    continue
+                self._request_streams[stream.request_id] = stream
+                new_requests.append(new_request)
 
-        self.new_requests_event.clear()
+            self.new_requests_event.clear() # drain all requests at once
 
         return new_requests, finished_requests
 
@@ -171,6 +179,9 @@ class RequestTracker:
 
 class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
+    def __init__(self, wrapper, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.wrapper = wrapper
 
     async def step_async(self) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
@@ -182,25 +193,102 @@ class _AsyncLLMEngine(LLMEngine):
         and updates the scheduler with the model outputs. Finally, it decodes
         the sequences and returns the newly generated results.
         """
-        seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
+        if get_engine_type() == EngineType.PREFILL:
+            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("prefill")
+        elif get_engine_type() == EngineType.DECODING:
+            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
+        elif get_engine_type() == EngineType.MIXED:
+            seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("mixed")
+        else:
+            raise ValueError(f"Unknown engine type {get_engine_type()}")
+
+        if get_engine_type() == EngineType.PREFILL:
+            bts = await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
+
+            # print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
+
+            for seq_group_metadata in seq_group_metadata_list:
+                seq_group_metadata.block_tables = bts.pop(0)
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
-            all_outputs = await self._run_workers_async(
-                "execute_model",
-                driver_kwargs={
-                    "seq_group_metadata_list": seq_group_metadata_list,
-                    "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
-                    "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
-                    "blocks_to_copy": scheduler_outputs.blocks_to_copy,
-                })
+            if get_engine_type() == EngineType.PREFILL:
+                all_outputs = await self._run_workers_async(
+                    "prefill",
+                    driver_kwargs={
+                        "seq_group_metadata_list": seq_group_metadata_list,
+                        "to_rank": 1,
+                    })
+            else:
+                print("scheduled decode:", time.perf_counter(), file=sys.stderr)
+                all_outputs = await self._run_workers_async(
+                    "execute_model",
+                    driver_kwargs={
+                        "seq_group_metadata_list": seq_group_metadata_list,
+                        "blocks_to_swap_in": scheduler_outputs.blocks_to_swap_in,
+                        "blocks_to_swap_out": scheduler_outputs.blocks_to_swap_out,
+                        "blocks_to_copy": scheduler_outputs.blocks_to_copy,
+                    })
 
             # Only the driver worker returns the sampling results.
             output = all_outputs[0]
         else:
             output = []
 
-        return self._process_model_outputs(output, scheduler_outputs)
+        if get_engine_type() == EngineType.PREFILL:
+            res = self._process_model_outputs(output, scheduler_outputs)
+            await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
+            return res
+        else:
+            with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
+                return self._process_model_outputs(output, scheduler_outputs)
+
+    async def notify_decode_worker_to_receive_kv_cache(self, seq_groups: List[SequenceGroup]) -> None:
+        pload = {
+            "encoded_seq_groups": marshalToB64String(seq_groups),
+        }
+
+        timeout = aiohttp.ClientTimeout(total=3 * 3600)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                async with session.post("http://127.0.0.1:8001/receive_kv_cache",
+                                        headers={"User-Agent": "p-worker"},
+                                        json=pload) as response:
+                    chunks = []
+                    async for chunk, _ in response.content.iter_chunks():
+                        chunks.append(chunk)
+                output = b"".join(chunks).decode("utf-8")
+                output = json.loads(output)
+
+                # Re-send the request if it failed.
+                if "error" not in output:
+                    break
+
+        return unmarshalFromB64String(output['encoded_bts'])
+
+    async def decode_remote(self,
+                            seq_groups: List[SequenceGroup]) -> Any:
+        pload = {
+            "encoded_seq_groups": marshalToB64String(seq_groups),
+        }
+
+        timeout = aiohttp.ClientTimeout(total=3 * 3600)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                async with session.post("http://127.0.0.1:8001/decode",
+                                        headers={"User-Agent": "p-worker"},
+                                        json=pload) as response:
+                    chunks = []
+                    async for chunk, _ in response.content.iter_chunks():
+                        chunks.append(chunk)
+                output = b"".join(chunks).decode("utf-8")
+                output = json.loads(output)
+
+                # Re-send the request if it failed.
+                if "error" not in output:
+                    break
 
     async def encode_request_async(
         self,
@@ -318,7 +406,7 @@ class AsyncLLMEngine:
         self.engine_use_ray = engine_use_ray
         self.log_requests = log_requests
         self.max_log_len = max_log_len
-        self.engine = self._init_engine(*args, **kwargs)
+        self.engine = self._init_engine(self, *args, **kwargs)
 
         self.background_loop = None
         # We need to keep a reference to unshielded
@@ -327,6 +415,12 @@ class AsyncLLMEngine:
         self._background_loop_unshielded = None
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
+        self.receive_kv_cache_tasks: List[asyncio.Task] = []
+        self.pre_running_requests: List[List[SequenceGroup]] = []
+        self.irecv_reqs: List[List[asyncio.Future]] = []
+
+        self.irecv_executor = ThreadPoolExecutor(max_workers=1)
+        self.io_stream = torch.cuda.Stream()
 
     @property
     def is_running(self) -> bool:
@@ -339,8 +433,15 @@ class AsyncLLMEngine:
             raise RuntimeError("Background loop is already running.")
         self._request_tracker.init_event()
 
-        self._background_loop_unshielded = asyncio.get_event_loop(
-        ).create_task(self.run_engine_loop())
+        if get_engine_type() == EngineType.PREFILL:
+            self._background_loop_unshielded = asyncio.get_event_loop(
+            ).create_task(self.run_engine_loop_prefill())
+        elif get_engine_type() == EngineType.DECODING:
+            self._background_loop_unshielded = asyncio.get_event_loop(
+            ).create_task(self.run_engine_loop_decode())
+        else:
+            raise ValueError(f"Unknown engine type {get_engine_type()}")
+
         self._background_loop_unshielded.add_done_callback(
             partial(_raise_exception_on_finish,
                     request_tracker=self._request_tracker))
@@ -365,13 +466,34 @@ class AsyncLLMEngine:
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
 
+    async def create_receive_kv_cache_task(self, to_receive: int) -> None:
+        task = self.irecv_executor.submit(partial(self.receive_kv_cache, to_receive))
+        self.receive_kv_cache_tasks.append(task)
+
+    def receive_kv_cache(self, to_receive: int):
+        assert get_engine_type() == EngineType.DECODING
+        num_layers = self.engine.model_config.get_num_layers(self.engine.parallel_config)
+
+        for i in range(num_layers):
+            key_cache, value_cache = self.engine.driver_worker.cache_engine.gpu_cache[i]
+            key_transfer_cache, value_transfer_cache = self.engine.driver_worker.cache_engine.cpu_cache[i]
+
+            for (start, l) in to_receive:
+                key_cache[start: start+l].copy_(key_transfer_cache[start: start+l])
+                value_cache[start: start+l].copy_(value_transfer_cache[start: start+l])
+
     async def engine_step(self) -> bool:
         """Kick the engine to process the waiting requests.
 
         Returns True if there are in-progress requests."""
 
-        new_requests, finished_requests = (
-            self._request_tracker.get_new_and_finished_requests())
+        if get_engine_type() == EngineType.DECODING:
+            # with perf_execution("AsyncLLMEngine.engine_step.get_new_and_finished_requests".rjust(60, ' ')):
+            new_requests, finished_requests = (
+                self._request_tracker.get_new_and_finished_requests(False))
+        else:
+            new_requests, finished_requests = (
+                self._request_tracker.get_new_and_finished_requests(True))
 
         for new_request in new_requests:
             # Add the request into the vLLM engine's waiting queue.
@@ -389,12 +511,21 @@ class AsyncLLMEngine:
         else:
             request_outputs = await self.engine.step_async()
 
+        if request_outputs:
+            if request_outputs[0].finished:
+                print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
+
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
-            self._request_tracker.process_request_output(
-                request_output, verbose=self.log_requests)
+            if get_engine_type() == EngineType.PREFILL:
+                request_output.finished = True
+                self._request_tracker.process_request_output(
+                    request_output, verbose=self.log_requests)
 
-        return len(request_outputs) > 0
+        if get_engine_type() == EngineType.PREFILL:
+            return self.engine.scheduler.waiting
+        else:
+            return len(request_outputs) > 0
 
     async def _engine_abort(self, request_ids: Iterable[str]):
         if self.engine_use_ray:
@@ -402,13 +533,24 @@ class AsyncLLMEngine:
         else:
             self.engine.abort_request(request_ids)
 
-    async def run_engine_loop(self):
+    async def run_engine_loop_prefill(self):
+        # Initialize the RequestTracker here so it uses the right event loop.
+        has_waiting = False
+        while True:
+            if not has_waiting:
+                await self._request_tracker.wait_for_new_requests()
+            has_waiting = await self.engine_step()
+            await asyncio.sleep(0)
+
+    async def run_engine_loop_decode(self):
         # Initialize the RequestTracker here so it uses the right event loop.
         has_requests_in_progress = False
         while True:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
+                self._request_tracker.new_requests_event.clear()
             has_requests_in_progress = await self.engine_step()
+            print("\n", file=sys.stderr)
             await asyncio.sleep(0)
 
     async def add_request(
@@ -627,6 +769,7 @@ class AsyncLLMEngine:
                      *engine_configs,
                      placement_group,
                      log_requests=not engine_args.disable_log_requests,
+                     engine_type=engine_args.engine_type,
                      log_stats=not engine_args.disable_log_stats,
                      max_log_len=engine_args.max_log_len,
                      start_engine_loop=start_engine_loop)
