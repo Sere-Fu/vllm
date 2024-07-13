@@ -109,7 +109,7 @@ class Scheduler:
         # Sequence groups in the SWAPPED state.
         self.swapped: Deque[SequenceGroup] = deque()
 
-        self.pre_running: List[List[SequenceGroup]] = []
+        self.pre_running: List[SequenceGroup] = []
 
         self.decode_remote_task: asyncio.Task = None
 
@@ -475,7 +475,8 @@ class Scheduler:
         if not self.running:
             if self.pre_running:
                 # print("pre_running loaded:", time.perf_counter(), file=sys.stderr)
-                self.running.extend(self.pre_running.pop(0))
+                self.running.extend(self.pre_running)
+                self.pre_running = []
         # Blocks that need to be swaped or copied before model execution.
         blocks_to_copy: Dict[int, List[int]] = {}
 

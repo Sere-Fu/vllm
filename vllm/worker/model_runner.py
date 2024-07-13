@@ -638,9 +638,11 @@ class ModelRunner:
             sampling_metadata=sampling_metadata,
         )
 
-        # while input_metadata.send_reqs:
-        #     req = input_metadata.send_reqs.pop(0)
-        #     req.wait()
+        print(len(input_metadata.send_reqs))
+        while input_metadata.send_reqs:
+            req = input_metadata.send_reqs.pop(0)
+            req.wait()
+            assert req.is_completed()
 
         return output
 
