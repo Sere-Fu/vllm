@@ -111,8 +111,8 @@ class PagedAttention(nn.Module):
             assert input_metadata.to_send is not None
 
             for start, l in input_metadata.to_send:
-                key_transfer_cache[start:start+l].copy_(key_cache[start:start+l])
-                value_transfer_cache[start:start+l].copy_(value_cache[start:start+l])
+                key_transfer_cache[start:start+l].copy_(key_cache[start:start+l], non_blocking=True)
+                value_transfer_cache[start:start+l].copy_(value_cache[start:start+l], non_blocking=True)
 
         if input_metadata.is_prompt:
             # Prompt run.

@@ -484,8 +484,8 @@ class AsyncLLMEngine:
             key_transfer_cache, value_transfer_cache = self.engine.driver_worker.cache_engine.cpu_cache[i]
 
             for (start, l) in to_receive:
-                key_cache[start: start+l].copy_(key_transfer_cache[start: start+l])
-                value_cache[start: start+l].copy_(value_transfer_cache[start: start+l])
+                key_cache[start: start+l].copy_(key_transfer_cache[start: start+l], non_blocking=True)
+                value_cache[start: start+l].copy_(value_transfer_cache[start: start+l], non_blocking=True)
 
     async def engine_step(self) -> bool:
         """Kick the engine to process the waiting requests.
