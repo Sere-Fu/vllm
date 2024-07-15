@@ -120,6 +120,23 @@ class BlockSpaceManager:
         else:
             return AllocStatus.LATER
 
+    def can_allocates(self, seq_groups: List[SequenceGroup]) -> AllocStatus:
+        # FIXME(woosuk): Here we assume that all sequences in the group share
+        # the same prompt. This may not be true for preempted sequences.
+        num_required_blocks = sum([len(seq_group.get_seqs()[0].logical_token_blocks)
+                                   for seq_group in seq_groups])
+
+        num_free_gpu_blocks = self.gpu_allocator.get_num_free_blocks()
+
+        # Use watermark to avoid frequent cache eviction.
+        if (self.num_total_gpu_blocks - num_required_blocks <
+                self.watermark_blocks):
+            return AllocStatus.NEVER
+        if num_free_gpu_blocks - num_required_blocks >= self.watermark_blocks:
+            return AllocStatus.OK
+        else:
+            return AllocStatus.LATER
+
     def allocate(self, seq_group: SequenceGroup) -> None:
         # NOTE: Here we assume that all sequences in the group have the same
         # prompt.

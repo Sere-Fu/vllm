@@ -446,8 +446,10 @@ class Scheduler:
                 if lora_int_id > 0:
                     curr_loras.add(lora_int_id)
                 self.waiting.popleft()
-                self._allocate(seq_group)
-                self.running.append(seq_group)
+                # self._allocate(seq_group)
+                for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
+                    seq.status = SequenceStatus.RUNNING
+                # self.running.append(seq_group)
                 num_curr_seqs += num_new_seqs
                 scheduled.append(seq_group)
 
@@ -528,7 +530,10 @@ class Scheduler:
             for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
                 seq_id = seq.seq_id
                 seq_data[seq_id] = seq.data
-                block_tables[seq_id] = self.block_manager.get_block_table(seq)
+                if schedule_type == "prefill":
+                    block_tables[seq_id] = []
+                else:
+                    block_tables[seq_id] = self.block_manager.get_block_table(seq)
 
             seq_group_metadata = SequenceGroupMetadata(
                 request_id=seq_group.request_id,

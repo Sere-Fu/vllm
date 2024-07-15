@@ -74,33 +74,22 @@ async def generate(request: Request) -> Response:
     return JSONResponse(ret)
 
 
-@app.post("/receive_kv_cache")
-async def receive_kv_cache(request: Request) -> Response:
+@app.post("/ready_to_receive")
+async def ready_to_receive(request: Request) -> Response:
     '''just send back ack for now, but in the future we can use this to update the kv cache with the received blocks'''
     if not engine.is_running:
         engine.start_background_loop()
     request_dict = await request.json()
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
-    bts = []
-    for seq_group in seq_groups:
-        for seq in seq_group.get_seqs():
-            seq.status = SequenceStatus.WAITING
-        engine.engine.scheduler._allocate(seq_group)
-        block_tables: Dict[int, List[int]] = {}
-        for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
-            seq_id = seq.seq_id
-            block_tables[seq_id] = engine.engine.scheduler.block_manager.get_block_table(seq)
-            bts.append(block_tables)
-
-    to_receive = coalesce_blocks([block
-                                    for block_tables in bts
-                                    for blocks in block_tables.values()
-                                    for block in blocks ])
-
-    await engine.create_receive_kv_cache_task(to_receive)
-
-    ret = {"encoded_bts": marshalToB64String(bts)}
+    if engine.engine.scheduler.block_manager.can_allocates(seq_groups):
+        for seq_group in seq_groups:
+            for seq in seq_group.get_seqs():
+                seq.status = SequenceStatus.WAITING
+            engine.engine.scheduler._allocate(seq_group)
+        ret = {"output": "yes"}
+    else:
+        ret = {"output": "no"}
     return JSONResponse(ret)
 
 @app.post("/decode")

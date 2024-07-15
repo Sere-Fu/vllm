@@ -203,12 +203,17 @@ class _AsyncLLMEngine(LLMEngine):
             raise ValueError(f"Unknown engine type {get_engine_type()}")
 
         if get_engine_type() == EngineType.PREFILL:
-            bts = await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
+            while True:
+                ret = await self.decode_worker_ready_to_receive(scheduler_outputs.scheduled_seq_groups)
+                if ret == 'yes':
+                    break
+                else:
+                    await asyncio.sleep(1)
 
             # print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
 
-            for seq_group_metadata in seq_group_metadata_list:
-                seq_group_metadata.block_tables = bts.pop(0)
+            # for seq_group_metadata in seq_group_metadata_list:
+                # seq_group_metadata.block_tables = bts.pop(0)
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
@@ -243,7 +248,7 @@ class _AsyncLLMEngine(LLMEngine):
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
                 return self._process_model_outputs(output, scheduler_outputs)
 
-    async def notify_decode_worker_to_receive_kv_cache(self, seq_groups: List[SequenceGroup]) -> None:
+    async def decode_worker_ready_to_receive(self, seq_groups: List[SequenceGroup]) -> None:
         pload = {
             "encoded_seq_groups": marshalToB64String(seq_groups),
         }
@@ -252,7 +257,7 @@ class _AsyncLLMEngine(LLMEngine):
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
-                async with session.post("http://127.0.0.1:8001/receive_kv_cache",
+                async with session.post("http://127.0.0.1:8001/ready_to_receive",
                                         headers={"User-Agent": "p-worker"},
                                         json=pload) as response:
                     chunks = []
@@ -265,7 +270,7 @@ class _AsyncLLMEngine(LLMEngine):
                 if "error" not in output:
                     break
 
-        return unmarshalFromB64String(output['encoded_bts'])
+        return output['output']
 
     async def decode_remote(self,
                             seq_groups: List[SequenceGroup]) -> Any:
