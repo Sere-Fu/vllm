@@ -1,6 +1,7 @@
 import argparse
 import json
 from typing import AsyncGenerator, Dict, List
+from functools import partial
 import asyncio
 
 from fastapi import FastAPI, Request
@@ -105,7 +106,11 @@ async def receive_kv_cache(request: Request) -> Response:
                                     for blocks in block_tables.values()
                                     for block in blocks ])
 
-    completed = engine.completed_remainder + engine.engine.driver_worker.model_runner.kvcc.dispatch_recv(num_tokens, to_receive)
+    # completed = engine.completed_remainder + engine.engine.driver_worker.model_runner.kvcc.dispatch_recv(num_tokens, to_receive)
+    task = engine.engine.forward_thread.submit(
+        partial(engine.engine.driver_worker.start_recv, num_tokens, to_receive)
+    )
+    completed = task.result()
 
     completed_batch = completed // (engine.layers * 2)
     engine.completed_remainder = completed % (engine.layers * 2)

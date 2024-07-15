@@ -249,6 +249,9 @@ class Worker:
                                                  to_rank)
         return output
 
+    def start_recv(self, num_tokens, to_receive):
+        return self.model_runner.kvcc.dispatch_recv(num_tokens, to_receive)
+
     def add_lora(self, lora_request: LoRARequest) -> bool:
         return self.model_runner.add_lora(lora_request)
 

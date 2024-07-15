@@ -183,6 +183,7 @@ class _AsyncLLMEngine(LLMEngine):
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.wrapper = wrapper
+        self.forward_thread = ThreadPoolExecutor(max_workers=1)
 
     async def step_async(self) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
@@ -257,6 +258,8 @@ class _AsyncLLMEngine(LLMEngine):
         }
 
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
+
+        self.driver_worker.model_runner.kvcc.dispatch_send()
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
@@ -363,7 +366,7 @@ class _AsyncLLMEngine(LLMEngine):
         # Run the driver worker asynchronously.
         driver_executor = getattr(self.driver_worker, method)
         coros.append(asyncio.get_event_loop().run_in_executor(
-            None, partial(driver_executor, *driver_args, **driver_kwargs)))
+            self.forward_thread, partial(driver_executor, *driver_args, **driver_kwargs)))
 
         # Run the ray workers asynchronously.
         for worker in self.workers:

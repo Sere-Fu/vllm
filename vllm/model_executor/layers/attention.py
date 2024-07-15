@@ -105,7 +105,7 @@ class PagedAttention(nn.Module):
 
         if input_metadata.to_rank != -1:
             assert input_metadata.is_prompt
-            print(f'kangsan debug {key.shape}, {value.shape}', file=sys.stderr)
+            # print(f'kangsan debug {key.shape}, {value.shape}', file=sys.stderr)
             input_metadata.kvcc.isend(key.contiguous())
             input_metadata.kvcc.isend(value.contiguous())
 
