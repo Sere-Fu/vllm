@@ -1,5 +1,6 @@
 """Multi-head attention."""
 from typing import List, Optional
+import sys
 
 import torch
 import torch.nn as nn
@@ -92,22 +93,21 @@ class PagedAttention(nn.Module):
         # vectors will not be cached. This happens during the initial memory
         # profiling run.
         if key_cache is not None and value_cache is not None:
-            cache_ops.reshape_and_cache(
-                key,
-                value,
-                key_cache,
-                value_cache,
-                input_metadata.slot_mapping.flatten(),
-                input_metadata.kv_cache_dtype,
-            )
+            if not input_metadata.is_prompt:
+                cache_ops.reshape_and_cache(
+                    key,
+                    value,
+                    key_cache,
+                    value_cache,
+                    input_metadata.slot_mapping.flatten(),
+                    input_metadata.kv_cache_dtype,
+                )
 
         if input_metadata.to_rank != -1:
             assert input_metadata.is_prompt
-            assert input_metadata.to_send is not None
-            for start, l in input_metadata.to_send:
-                # print(f"send {start} {l}")
-                torch.distributed.isend(key_cache[start: start+l], input_metadata.to_rank)
-                torch.distributed.isend(value_cache[start: start+l], input_metadata.to_rank)
+            print(f'kangsan debug {key.shape}, {value.shape}', file=sys.stderr)
+            input_metadata.kvcc.isend(key.contiguous())
+            input_metadata.kvcc.isend(value.contiguous())
 
         if input_metadata.is_prompt:
             # Prompt run.

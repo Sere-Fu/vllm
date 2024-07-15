@@ -316,3 +316,62 @@ def coalesce_blocks(block_list: List[int]) -> List[Tuple[int, int]]:
             current_block_length = 1
     ret.append((current_block_start, current_block_length))
     return ret
+
+
+class KVCacheCoordinator:
+    DISBALED = False
+    def __init__(self, num_layers, num_kv_heads, head_size):
+        self.max_wip = 400
+        self.pending = []
+        self.wip = []
+        self.num_layers = num_layers
+        self.num_kv_heads = num_kv_heads
+        self.head_size = head_size
+
+    def isend(self, tensor):
+        if KVCacheCoordinator.DISBALED: return
+        assert len(self.pending) < self.max_wip * 2
+        if len(self.wip) < self.max_wip:
+            self.wip.append((tensor, torch.distributed.isend(tensor, dst=1)))
+        else:
+            self.pending.append(tensor)
+
+    def release_completed_and_dispatch_pending(self, dst, role):
+        completed = 0
+        for i, (buf, h) in enumerate(self.wip):
+            if not h.is_completed():
+                print(f'{role}: completed={i}, wip={len(self.wip)-i}, pending={len(self.pending)}')
+                completed = i
+                self.wip = self.wip[i:]
+                break
+
+        for i, buf in enumerate(self.pending):
+            if len(self.wip) < self.max_wip:
+                self.wip.append((buf, torch.distributed.isend(buf, dst=dst)))
+            else:
+                self.pending = self.pending[i:]
+                break
+        return completed
+
+    def dispatch_send(self):
+        if KVCacheCoordinator.DISBALED: return
+        self.release_completed_and_dispatch_pending(1, 'P')
+
+    def dispatch_recv(self, num_tokens, to_receive):
+        if KVCacheCoordinator.DISBALED: return
+
+        completed = self.release_completed_and_dispatch_pending(0, 'D')
+
+        assert len(self.pending) < self.max_wip * 2
+        for _ in range(self.num_layers):
+            k_buf = torch.empty(size=(num_tokens, self.num_kv_heads, self.head_size), dtype=torch.bfloat16, device='cuda')
+            v_buf = torch.empty(size=(num_tokens, self.num_kv_heads, self.head_size), dtype=torch.bfloat16, device='cuda')
+            if len(self.wip) < self.max_wip:
+                print(f'kangsan debug {k_buf.shape}, {v_buf.shape}', file=sys.stderr)
+                self.wip.append((k_buf, torch.distributed.irecv(k_buf, src=0)))
+                self.wip.append((v_buf, torch.distributed.irecv(v_buf, src=0)))
+            else:
+                self.pending.append(k_buf)
+                self.pending.append(v_buf)
+
+        return completed

@@ -337,14 +337,13 @@ class LLMEngine:
             by adjusting the `gpu_memory_utilization` parameters.
         """
         # Get the maximum number of blocks that can be allocated on GPU and CPU.
-        # num_blocks = self._run_workers(
-        #     "profile_num_available_blocks",
-        #     block_size=self.cache_config.block_size,
-        #     gpu_memory_utilization=self.cache_config.gpu_memory_utilization,
-        #     cpu_swap_space=self.cache_config.swap_space_bytes,
-        #     cache_dtype=self.cache_config.cache_dtype,
-        # )
-        num_blocks = [(2600, 400)]
+        num_blocks = self._run_workers(
+            "profile_num_available_blocks",
+            block_size=self.cache_config.block_size,
+            gpu_memory_utilization=self.cache_config.gpu_memory_utilization,
+            cpu_swap_space=self.cache_config.swap_space_bytes,
+            cache_dtype=self.cache_config.cache_dtype,
+        )
 
         # Since we use a shared centralized controller, we take the minimum
         # number of blocks across all workers to make sure all the memory

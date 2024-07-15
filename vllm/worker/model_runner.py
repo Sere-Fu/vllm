@@ -16,7 +16,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.utils import in_wsl, coalesce_blocks, perf_execution
+from vllm.utils import in_wsl, coalesce_blocks, perf_execution, KVCacheCoordinator
 
 logger = init_logger(__name__)
 
@@ -74,6 +74,11 @@ class ModelRunner:
         # cache in_wsl result
         self.in_wsl = in_wsl()
         self.kv_cache_dtype = kv_cache_dtype
+        self.kvcc = KVCacheCoordinator(
+            self.model_config.get_num_layers(self.parallel_config),
+            self.model_config.get_num_kv_heads(self.parallel_config),
+            self.model_config.get_head_size(),
+        )
 
     def load_model(self) -> None:
         self.model = get_model(self.model_config, self.device_config,
@@ -178,7 +183,8 @@ class ModelRunner:
                     slot_mapping[-1].append(_PAD_SLOT_ID)
                     continue
 
-                block_number = block_table[i // self.block_size]
+                # block_number = block_table[i // self.block_size]
+                block_number = 0
                 block_offset = i % self.block_size
                 slot = block_number * self.block_size + block_offset
                 slot_mapping[-1].append(slot)
@@ -528,13 +534,14 @@ class ModelRunner:
 
         if to_rank != -1:
             assert seq_group_metadata_list[0].block_tables is not None
-            input_metadata.to_send = coalesce_blocks([block
-                                                      for seq_group_metadata in seq_group_metadata_list
-                                                      for blocks in seq_group_metadata.block_tables.values()
-                                                      for block in blocks])
+            # input_metadata.to_send = coalesce_blocks([block
+            #                                           for seq_group_metadata in seq_group_metadata_list
+            #                                           for blocks in seq_group_metadata.block_tables.values()
+            #                                           for block in blocks])
             input_metadata.to_rank = to_rank
+            input_metadata.kvcc = self.kvcc
         else:
-            input_metadata.to_send = []
+            # input_metadata.to_send = []
             input_metadata.to_rank = -1
 
         return (input_tokens, input_positions, input_metadata,

@@ -207,10 +207,15 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             # self.scheduler.decode_remote_task = asyncio.create_task(self.decode_remote(seq_group_metadata_list))
             # self.scheduler.decode_remote_task.add_done_callback(self.wrapper.decode_remote_callback)
-            bts = await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
+
+            max_prompt_len = max([len(seq_group.seqs_dict[seq_group.get_seqs()[0].seq_id].data.prompt_token_ids)
+                        for seq_group in scheduler_outputs.scheduled_seq_groups])
+            num_tokens = len(seq_group_metadata_list) * max_prompt_len
+
+            await self.notify_decode_worker_to_receive_kv_cache(scheduler_outputs.scheduled_seq_groups)
             # print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
-            for seq_group_metadata in seq_group_metadata_list:
-                seq_group_metadata.block_tables = bts.pop(0)
+            # for seq_group_metadata in seq_group_metadata_list:
+            #     seq_group_metadata.block_tables = bts.pop(0)
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
@@ -246,10 +251,6 @@ class _AsyncLLMEngine(LLMEngine):
                 return self._process_model_outputs(output, scheduler_outputs)
 
     async def notify_decode_worker_to_receive_kv_cache(self, seq_groups: List[SequenceGroup]) -> None:
-        # to_receive = coalesce_blocks([block
-        #                                 for seq_group_metadata in seq_group_metadata_list
-        #                                 for blocks in seq_group_metadata.block_tables.values()
-        #                                 for block in blocks ])
         pload = {
             "from_rank": torch.distributed.get_rank(),
             "encoded_seq_groups": marshalToB64String(seq_groups),
@@ -272,7 +273,7 @@ class _AsyncLLMEngine(LLMEngine):
                 if "error" not in output:
                     break
 
-        return unmarshalFromB64String(output['encoded_bts'])
+        # return unmarshalFromB64String(output['encoded_bts'])
 
     async def decode_remote(self,
                             seq_groups: List[SequenceGroup]) -> Any:
@@ -427,7 +428,10 @@ class AsyncLLMEngine:
         self.irecv_reqs: List[List[asyncio.Future]] = []
 
         self.irecv_executor = ThreadPoolExecutor(max_workers=1)
-        self.io_stream = torch.cuda.Stream()
+        # self.io_stream = torch.cuda.Stream()
+        self.completed_remainder = 0
+        # self.layers = self.engine.model_config.get_num_layers(self.engine.parallel_config),
+        self.layers = 32
 
     @property
     def is_running(self) -> bool:
@@ -473,23 +477,23 @@ class AsyncLLMEngine:
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
 
-    async def create_receive_kv_cache_task(self, from_rank: int, to_receive: List[Tuple[int, int]]) -> None:
-        # task = asyncio.get_event_loop().run_in_executor(self.irecv_executor, partial(self.receive_kv_cache, from_rank, to_receive))
-        task = self.irecv_executor.submit(partial(self.receive_kv_cache, from_rank, to_receive))
-        # task.add_done_callback(self.handle_irecv_reqs)
-        self.receive_kv_cache_tasks.append(task)
+    # async def create_receive_kv_cache_task(self, from_rank: int, to_receive: List[Tuple[int, int]]) -> None:
+    #     # task = asyncio.get_event_loop().run_in_executor(self.irecv_executor, partial(self.receive_kv_cache, from_rank, to_receive))
+    #     task = self.irecv_executor.submit(partial(self.receive_kv_cache, from_rank, to_receive))
+    #     # task.add_done_callback(self.handle_irecv_reqs)
+    #     self.receive_kv_cache_tasks.append(task)
 
-    def receive_kv_cache(self, from_rank: int, to_receive: List[Tuple[int, int]]):
-        assert get_engine_type() == EngineType.DECODING
+    # def receive_kv_cache(self, from_rank: int, to_receive: List[Tuple[int, int]]):
+    #     assert get_engine_type() == EngineType.DECODING
 
-        with torch.cuda.stream(self.io_stream):
-            reqs = []
-            for key_cache, value_cache in self.engine.driver_worker.cache_engine.gpu_cache:
-                for (start, l) in to_receive:
-                    # print(f"recv {start} {l}")
-                    reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
-                    reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
-            return reqs
+    #     with torch.cuda.stream(self.io_stream):
+    #         reqs = []
+    #         for key_cache, value_cache in self.engine.driver_worker.cache_engine.gpu_cache:
+    #             for (start, l) in to_receive:
+    #                 # print(f"recv {start} {l}")
+    #                 reqs.append(torch.distributed.irecv(key_cache[start: start+l], src=from_rank))
+    #                 reqs.append(torch.distributed.irecv(value_cache[start: start+l], src=from_rank))
+    #         return reqs
 
     # def handle_irecv_reqs(self, task: asyncio.Task):
     #     irecv_reqs = task.result()

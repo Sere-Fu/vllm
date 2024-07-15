@@ -81,13 +81,18 @@ async def receive_kv_cache(request: Request) -> Response:
     if not engine.is_running:
         engine.start_background_loop()
     request_dict = await request.json()
-    from_rank = request_dict.pop("from_rank")
+    # from_rank = request_dict.pop("from_rank")
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
+
+    max_prompt_len = max([len(seq_group.seqs_dict[seq_group.get_seqs()[0].seq_id].data.prompt_token_ids)
+                for seq_group in seq_groups])
+    num_tokens = len(seq_groups) * max_prompt_len
 
     bts = []
     for seq_group in seq_groups:
         for seq in seq_group.get_seqs():
             seq.status = SequenceStatus.WAITING
+
         engine.engine.scheduler._allocate(seq_group)
         block_tables: Dict[int, List[int]] = {}
         for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
@@ -100,9 +105,20 @@ async def receive_kv_cache(request: Request) -> Response:
                                     for blocks in block_tables.values()
                                     for block in blocks ])
 
-    await engine.create_receive_kv_cache_task(from_rank, to_receive)
+    completed = engine.completed_remainder + engine.engine.driver_worker.model_runner.kvcc.dispatch_recv(num_tokens, to_receive)
 
-    ret = {"encoded_bts": marshalToB64String(bts)}
+    completed_batch = completed // (engine.layers * 2)
+    engine.completed_remainder = completed % (engine.layers * 2)
+
+    # add without_kv to with_kv based_on completed
+    for _ in range(completed_batch):
+        engine.engine.scheduler.with_kv.extend(engine.engine.scheduler.without_kv.pop(0))
+        engine._request_tracker.new_requests_event.set()
+
+    # await engine.create_receive_kv_cache_task(from_rank, num_tokens, to_receive)
+
+    # ret = {"encoded_bts": marshalToB64String(bts)}
+    ret = {"output": "ack"}
     return JSONResponse(ret)
 
 @app.post("/decode")
@@ -110,26 +126,22 @@ async def decode(request: Request) -> Response:
     request_dict = await request.json()
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
-    engine.pre_running_requests.append(seq_groups) # process later
+    engine.engine.scheduler.without_kv.append(seq_groups)
+
+    # engine.pre_running_requests.append(seq_groups) # process later
     # if sum(len(seq_groups) for seq_groups in engine.pre_running_requests) >= engine.engine.scheduler_config.max_num_seqs:
     # engine._request_tracker.new_requests_event.set()
     # engine.engine.scheduler.running.extend([seq_group for seq_groups in engine.pre_running_requests for seq_group in seq_groups])
     # num_batches = len(engine.pre_running_requests)
-    if sum([len(seq_groups) for seq_groups in engine.pre_running_requests]) >= engine.engine.scheduler_config.max_num_seqs:
-        # for irecv_reqs in engine.irecv_reqs:
+    # if sum([len(seq_groups) for seq_groups in engine.pre_running_requests]) >= engine.engine.scheduler_config.max_num_seqs:
+        # for task in engine.receive_kv_cache_tasks:
+        #     irecv_reqs = task.result()
         #     for irecv_req in irecv_reqs:
         #         irecv_req.wait()
-        for task in engine.receive_kv_cache_tasks:
-            # irecv_reqs = await task
-            irecv_reqs = task.result()
-            for irecv_req in irecv_reqs:
-                irecv_req.wait()
 
         # engine.irecv_reqs = []
-        engine.receive_kv_cache_tasks = []
-        engine.engine.scheduler.pre_running.append([seq_group for seq_groups in engine.pre_running_requests for seq_group in seq_groups])
-        engine.pre_running_requests.clear()
-        engine._request_tracker.new_requests_event.set()
+    # engine.pre_running_requests.clear()
+    # engine._request_tracker.new_requests_event.set()
 
     ret = {"output":  "ack"}
     return JSONResponse(ret)

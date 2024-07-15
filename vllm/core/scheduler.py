@@ -109,7 +109,8 @@ class Scheduler:
         # Sequence groups in the SWAPPED state.
         self.swapped: Deque[SequenceGroup] = deque()
 
-        self.pre_running: List[List[SequenceGroup]] = []
+        self.without_kv: List[List[SequenceGroup]] = []
+        self.with_kv: List[SequenceGroup] = []
 
         self.decode_remote_task: asyncio.Task = None
 
@@ -450,7 +451,10 @@ class Scheduler:
                 if lora_int_id > 0:
                     curr_loras.add(lora_int_id)
                 self.waiting.popleft()
-                self._allocate(seq_group)
+                # do not allocate in block manager
+                # self._allocate(seq_group)
+                for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
+                    seq.status = SequenceStatus.RUNNING
                 self.running.append(seq_group)
                 num_curr_seqs += num_new_seqs
                 scheduled.append(seq_group)
@@ -473,9 +477,9 @@ class Scheduler:
 
     def _schedule_decode(self) -> SchedulerOutputs:
         if not self.running:
-            if self.pre_running:
-                # print("pre_running loaded:", time.perf_counter(), file=sys.stderr)
-                self.running.extend(self.pre_running.pop(0))
+            while self.with_kv and self.running < self.scheduler_config.max_num_seqs:
+                self.running.append(self.with_kv.pop(0))
+
         # Blocks that need to be swaped or copied before model execution.
         blocks_to_copy: Dict[int, List[int]] = {}
 
@@ -531,7 +535,10 @@ class Scheduler:
             for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
                 seq_id = seq.seq_id
                 seq_data[seq_id] = seq.data
-                block_tables[seq_id] = self.block_manager.get_block_table(seq)
+                if schedule_type == "prefill":
+                    block_tables[seq_id] = []
+                else:
+                    block_tables[seq_id] = self.block_manager.get_block_table(seq)
 
             seq_group_metadata = SequenceGroupMetadata(
                 request_id=seq_group.request_id,
