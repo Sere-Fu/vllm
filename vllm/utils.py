@@ -316,3 +316,27 @@ def coalesce_blocks(block_list: List[int]) -> List[Tuple[int, int]]:
             current_block_length = 1
     ret.append((current_block_start, current_block_length))
     return ret
+
+class Conduit:
+    def  __init__(self, end_marker):
+        self.new_item_event = asyncio.Event()
+        self.end_marker = end_marker
+        self.items = []
+
+    def __aiter__(self):
+        return self
+
+    def append(self, item):
+        if not self.items:
+            self.new_item_event.set()
+        self.items.append(item)
+
+    async def __anext__(self):
+        if not self.items:
+            await self.new_commer_event.wait()
+            self.new_commer_event.clear()
+        item = self.items.pop(0)
+        if item == self.end_marker:
+            raise StopAsyncIteration
+        else:
+            return item

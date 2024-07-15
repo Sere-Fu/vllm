@@ -16,7 +16,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.utils import in_wsl, coalesce_blocks, perf_execution
+from vllm.utils import in_wsl, coalesce_blocks, perf_execution, Conduit
 
 logger = init_logger(__name__)
 
@@ -74,6 +74,9 @@ class ModelRunner:
         # cache in_wsl result
         self.in_wsl = in_wsl()
         self.kv_cache_dtype = kv_cache_dtype
+
+        num_layers = model_config.get_num_layers(parallel_config)
+        self.memcpy_events = [torch.cuda.Event() for _ in range(num_layers)]
 
         self.transfer_stream = torch.cuda.Stream()
         assert self.transfer_stream != torch.cuda.current_stream()
@@ -594,10 +597,16 @@ class ModelRunner:
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
         transfer_caches: List[Tuple[torch.Tensor, torch.Tensor]],
         to_rank: int,
+        conduit: Conduit,
     ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
          lora_requests,
          lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, to_rank)
+
+        input_metadata.conduit = conduit
+        input_metadata.memcpy_events = self.memcpy_events
+        input_metadata.recorded_memcpy_events = []
+
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)

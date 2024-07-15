@@ -18,7 +18,7 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
-from vllm.utils import perf_execution
+from vllm.utils import perf_execution, Conduit
 
 
 class Worker:
@@ -226,6 +226,7 @@ class Worker:
     @torch.inference_mode()
     def prefill(
         self,
+        conduit: Conduit,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None,
         to_rank: Optional[int] = None,
     ) -> Optional[SamplerOutput]:
@@ -247,7 +248,8 @@ class Worker:
         output = self.model_runner.prefill(seq_group_metadata_list,
                                                 self.gpu_cache,
                                                 self.cpu_cache,
-                                                 to_rank)
+                                                to_rank,
+                                                conduit)
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:

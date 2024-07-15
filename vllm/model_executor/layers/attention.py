@@ -114,6 +114,17 @@ class PagedAttention(nn.Module):
                 key_transfer_cache[start:start+l].copy_(key_cache[start:start+l], non_blocking=True)
                 value_transfer_cache[start:start+l].copy_(value_cache[start:start+l], non_blocking=True)
 
+            print(f"kangsan debug {len(input_metadata.memcpy_events)}, {len(input_metadata.recorded_memcpy_events)}", file=sys.stderr)
+            event = input_metadata.memcpy_events.pop(0)
+            event.record
+            input_metadata.recorded_memcpy_events.append(event)
+            if not input_metadata.memcpy_events:
+                while input_metadata.recorded_memcpy_events:
+                    input_metadata.memcpy_events.append(input_metadata.recorded_memcpy_events.pop(0))
+
+
+
+
         if input_metadata.is_prompt:
             # Prompt run.
             if self.num_kv_heads != self.num_heads:

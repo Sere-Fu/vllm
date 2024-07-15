@@ -18,7 +18,7 @@ from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SequenceGroupMetadata, SequenceGroup
-from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution
+from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution, Conduit
 
 logger = init_logger(__name__)
 
@@ -181,6 +181,7 @@ class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.transfer_thread = ThreadPoolExecutor(max_workers=1)
         self.wrapper = wrapper
 
     async def step_async(self) -> List[RequestOutput]:
@@ -218,9 +219,11 @@ class _AsyncLLMEngine(LLMEngine):
         if not scheduler_outputs.is_empty():
             # Execute the model.
             if get_engine_type() == EngineType.PREFILL:
+                conduit = Conduit(b'end')
                 all_outputs = await self._run_workers_async(
                     "prefill",
                     driver_kwargs={
+                        "conduit": conduit,
                         "seq_group_metadata_list": seq_group_metadata_list,
                         "to_rank": 1,
                     })
