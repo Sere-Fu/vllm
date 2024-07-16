@@ -336,7 +336,7 @@ class KVCacheCoordinator:
             self.pending.append(tensor)
 
     def release_completed_and_dispatch_pending(self, dst, role):
-        print("into tidy")
+        print(f"into tidy wip {len(self.wip)}, pending {len(self.pending)}", file=sys.stderr)
         completed = 0
         for i, (buf, h) in enumerate(self.wip):
             if not h.is_completed():
