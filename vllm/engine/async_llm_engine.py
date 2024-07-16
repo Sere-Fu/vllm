@@ -183,8 +183,8 @@ class _AsyncLLMEngine(LLMEngine):
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.transfer_thread = ThreadPoolExecutor(max_workers=1)
-        self.to_t = asyncio.Queue()
-        self.from_t = asyncio.Queue()
+        # self.to_t = asyncio.Queue()
+        # self.from_t = asyncio.Queue()
         self.wrapper = wrapper
 
     async def step_async(self) -> List[RequestOutput]:
@@ -440,6 +440,9 @@ class AsyncLLMEngine:
                 partial(_raise_exception_on_finish,
                         request_tracker=self._request_tracker))
             self.websocket_to_decode_worker = asyncio.shield(self._websocket_to_decode_worker_unshielded)
+
+        self.engine.to_t = asyncio.Queue()
+        self.engine.from_t = asyncio.Queue()
 
     def _init_engine(self, *args,
                      **kwargs) -> Union[_AsyncLLMEngine, "ray.ObjectRef"]:
