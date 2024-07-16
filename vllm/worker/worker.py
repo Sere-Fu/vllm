@@ -1,5 +1,6 @@
 """A GPU worker class."""
 import gc
+import asyncio
 import os
 from typing import Dict, List, Tuple, Set, Optional
 
@@ -18,7 +19,7 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
-from vllm.utils import perf_execution, Conduit
+from vllm.utils import perf_execution
 
 
 class Worker:
@@ -149,7 +150,7 @@ class Worker:
         self.cache_events = self.cache_engine.events
         self.gpu_cache = self.cache_engine.gpu_cache
         self.cpu_cache = self.cache_engine.cpu_cache
-        self.cpu_kv_buffer = self.cache_engine.cpu_kv_buffer
+        self.kv_buffer = self.cache_engine.kv_buffer
         self.model_runner.set_block_size(self.cache_engine.block_size)
 
     def warm_up_model(self) -> None:
@@ -227,7 +228,7 @@ class Worker:
     @torch.inference_mode()
     def prefill(
         self,
-        conduit: Conduit,
+        conduit: asyncio.Queue,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None,
         to_rank: Optional[int] = None,
     ) -> Optional[SamplerOutput]:
@@ -248,7 +249,7 @@ class Worker:
 
         output = self.model_runner.prefill(seq_group_metadata_list,
                                                 self.gpu_cache,
-                                                self.cpu_kv_buffer,
+                                                self.kv_buffer,
                                                 to_rank,
                                                 conduit)
         return output

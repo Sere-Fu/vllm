@@ -48,7 +48,7 @@ class CacheEngine:
         # Initialize the cache.
         self.gpu_cache = self.allocate_gpu_cache()
         self.cpu_cache = self.allocate_cpu_cache()
-        self.cpu_kv_buffer = self.allocate_cpu_kv_buffer()
+        self.kv_buffer = self.allocate_cpu_kv_buffer()
 
         # Initialize the stream for caching operations.
         self.cache_stream = torch.cuda.Stream()

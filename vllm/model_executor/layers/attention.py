@@ -67,9 +67,10 @@ class PagedAttention(nn.Module):
         value: torch.Tensor,
         key_cache: Optional[torch.Tensor],
         value_cache: Optional[torch.Tensor],
-        key_transfer_cache: Optional[torch.Tensor],
-        value_transfer_cache: Optional[torch.Tensor],
+        key_buffer: Optional[torch.Tensor],
+        value_buffer: Optional[torch.Tensor],
         input_metadata: InputMetadata,
+        ith: int,
     ) -> torch.Tensor:
         """PagedAttention forward pass.
 
@@ -110,8 +111,12 @@ class PagedAttention(nn.Module):
             assert input_metadata.is_prompt
             assert input_metadata.to_send is not None
             num_slots = key.shape[0]
-            key_transfer_cache[:num_slots].copy_(key, non_blocking=True)
-            value_transfer_cache[:num_slots].copy_(value, non_blocking=True)
+            print(f"kangsan debug {key.shape}", file=sys.stderr)
+            key_buffer[:num_slots].copy_(key, non_blocking=True)
+            value_buffer[:num_slots].copy_(value, non_blocking=True)
+
+
+
 
 
 

@@ -19,7 +19,7 @@ from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SequenceGroupMetadata, SequenceGroup
-from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution, Conduit
+from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution
 
 logger = init_logger(__name__)
 
@@ -183,7 +183,6 @@ class _AsyncLLMEngine(LLMEngine):
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.transfer_thread = ThreadPoolExecutor(max_workers=1)
-        # self.conduit = Conduit()
         self.to_t = asyncio.Queue()
         self.from_t = asyncio.Queue()
         self.wrapper = wrapper

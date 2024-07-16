@@ -1,5 +1,6 @@
 import time
 from typing import Dict, List, Optional, Tuple, Set, Union
+import asyncio
 
 import numpy as np
 import torch
@@ -16,7 +17,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.utils import in_wsl, coalesce_blocks, perf_execution, Conduit
+from vllm.utils import in_wsl, coalesce_blocks, perf_execution
 
 logger = init_logger(__name__)
 
@@ -571,14 +572,14 @@ class ModelRunner:
             model_executable = self.model
 
         num_layers = self.model_config.get_num_layers(self.parallel_config)
-        transfer_caches = [(None, None)] * num_layers
+        kv_buffers = [(None, None)] * num_layers
 
         with perf_execution("ModelRunner.execute_model.forward".rjust(60, ' ')):
             hidden_states = model_executable(
                 input_ids=input_tokens,
                 positions=input_positions,
                 kv_caches=kv_caches,
-                transfer_caches=transfer_caches,
+                kv_buffers=kv_buffers,
                 input_metadata=input_metadata,
             )
 
@@ -595,9 +596,9 @@ class ModelRunner:
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
-        transfer_caches: List[Tuple[torch.Tensor, torch.Tensor]],
+        kv_buffers: List[Tuple[torch.Tensor, torch.Tensor]],
         to_rank: int,
-        conduit: Conduit,
+        conduit: asyncio.Queue,
     ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
          lora_requests,
@@ -621,7 +622,7 @@ class ModelRunner:
             input_ids=input_tokens,
             positions=input_positions,
             kv_caches=kv_caches,
-            transfer_caches=transfer_caches,
+            kv_buffers=kv_buffers,
             input_metadata=input_metadata,
         )
 
