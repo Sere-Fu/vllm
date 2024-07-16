@@ -149,6 +149,7 @@ class Worker:
         self.cache_events = self.cache_engine.events
         self.gpu_cache = self.cache_engine.gpu_cache
         self.cpu_cache = self.cache_engine.cpu_cache
+        self.cpu_kv_buffer = self.cache_engine.cpu_kv_buffer
         self.model_runner.set_block_size(self.cache_engine.block_size)
 
     def warm_up_model(self) -> None:
@@ -247,7 +248,7 @@ class Worker:
 
         output = self.model_runner.prefill(seq_group_metadata_list,
                                                 self.gpu_cache,
-                                                self.cpu_cache,
+                                                self.cpu_kv_buffer,
                                                 to_rank,
                                                 conduit)
         return output
