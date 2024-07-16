@@ -96,13 +96,38 @@ async def ready_to_receive(request: Request) -> Response:
 
 @app.websocket("/decode")
 async def decode(ws: WebSocket):
+    if not engine.is_running:
+        engine.start_background_loop()
+
     await ws.accept()
     print("prefill worker connected")
 
     while True:
         packet = unmarshalFromB64String(await ws.receive_text())
-        if packet['type'] == 'seq_groups':
-            engine.engine.scheduler.with_kv.extend(packet['data'])
+        if packet['type'] == 'query_seq_groups':
+            seq_groups = packet['data']
+            if engine.engine.scheduler.block_manager.can_allocates(seq_groups):
+                for seq_group in seq_groups:
+                    for seq in seq_group.get_seqs():
+                        seq.status = SequenceStatus.WAITING
+                    engine.engine.scheduler._allocate(seq_group)
+                print(f"prove {len(seq_groups)} requests")
+                await ws.send_text("yes")
+            else:
+                print(f"reject {len(seq_groups)} requests")
+                await ws.send_text("no")
+
+        if packet['type'] == 'transfer_kv':
+            # k, v, i, slots = packet['data']
+            # k.reshape
+            # engine.engine.driver_worker.cpu_kv_buffer[i][0].copy_(k)
+            # engine.engine.driver_worker.cpu_kv_buffer[i][1].copy_(v)
+
+            pass
+        if packet['type'] == 'transfer_seq_groups':
+            seq_groups = packet['data']
+            print(f"received {len(seq_groups)} requests")
+            engine.engine.scheduler.with_kv.extend(seq_groups)
             engine._request_tracker.new_requests_event.set()
 
 if __name__ == "__main__":

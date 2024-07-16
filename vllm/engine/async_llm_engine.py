@@ -183,7 +183,9 @@ class _AsyncLLMEngine(LLMEngine):
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.transfer_thread = ThreadPoolExecutor(max_workers=1)
-        self.conduit = Conduit()
+        # self.conduit = Conduit()
+        self.to_t = asyncio.Queue()
+        self.from_t = asyncio.Queue()
         self.wrapper = wrapper
 
     async def step_async(self) -> List[RequestOutput]:
@@ -207,13 +209,13 @@ class _AsyncLLMEngine(LLMEngine):
 
         if get_engine_type() == EngineType.PREFILL:
             while True:
-                ret = await self.decode_worker_ready_to_receive(scheduler_outputs.scheduled_seq_groups)
+                packet = {'type': 'query_seq_groups', 'data': scheduler_outputs.scheduled_seq_groups}
+                self.to_t.put_nowait((True, marshalToB64String(packet)))
+                ret = await self.from_t.get()
                 if ret == 'yes':
                     break
                 else:
                     await asyncio.sleep(1)
-
-            # print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
@@ -221,7 +223,7 @@ class _AsyncLLMEngine(LLMEngine):
                 all_outputs = await self._run_workers_async(
                     "prefill",
                     driver_kwargs={
-                        "conduit": self.conduit,
+                        "conduit": self.to_t,
                         "seq_group_metadata_list": seq_group_metadata_list,
                         "to_rank": 1,
                     })
@@ -244,8 +246,8 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             res = self._process_model_outputs(output, scheduler_outputs)
             # await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
-            packet = {'type': 'seq_groups', 'data': scheduler_outputs.scheduled_seq_groups}
-            self.conduit.append(marshalToB64String(packet))
+            packet = {'type': 'transfer_seq_groups', 'data': scheduler_outputs.scheduled_seq_groups}
+            self.to_t.put_nowait((False, marshalToB64String(packet)))
             return res
         else:
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
@@ -530,8 +532,15 @@ class AsyncLLMEngine:
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.ws_connect("http://127.0.0.1:8001/decode") as ws:
-                async for data in self.engine.conduit:
+                while True:
+                    expect_return, data = await self.engine.to_t.get()
                     await ws.send_str(data)
+                    if expect_return:
+                        self.engine.from_t.put_nowait(await ws.receive_str())
+                # async for expect_return, data in self.engine.conduit:
+                #     await ws.send_str(data)
+                #     if expect_return:
+                #         self.engine.from_decode_worker.put_nowait(await ws.receive_str())
 
     async def run_engine_loop_prefill(self):
         # Initialize the RequestTracker here so it uses the right event loop.
