@@ -316,3 +316,21 @@ def coalesce_blocks(block_list: List[int]) -> List[Tuple[int, int]]:
             current_block_length = 1
     ret.append((current_block_start, current_block_length))
     return ret
+
+class SendKVCacheCoordinator:
+    def __init__(self, conduit: asyncio.Queue):
+        self.conduit = conduit
+        self.wip = []
+
+    def submit(self, k, v, i, event):
+        self.wip.append((k, v, i, event))
+
+    def check(self):
+        for i, (k, v, event) in enumerate(self.wip):
+            if event.query():
+                packet = { "type": "transfer_kv", "data": (k, v, i)}
+                self.conduit.put_nowait((False, marshalToB64String(packet)))
+                self.wip.pop(0)
+            else:
+                print(f"wip {len(self.wip)}, completed {i}")
+                break

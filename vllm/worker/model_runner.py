@@ -17,7 +17,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.utils import in_wsl, coalesce_blocks, perf_execution
+from vllm.utils import in_wsl, coalesce_blocks, perf_execution, SendKVCacheCoordinator
 
 logger = init_logger(__name__)
 
@@ -81,6 +81,7 @@ class ModelRunner:
 
         self.transfer_stream = torch.cuda.Stream()
         assert self.transfer_stream != torch.cuda.current_stream()
+        # self.s_kvc = SendKVCacheCoordinator()
 
     def load_model(self) -> None:
         self.model = get_model(self.model_config, self.device_config,
@@ -535,16 +536,15 @@ class ModelRunner:
             )
 
         if to_rank != -1:
-            assert seq_group_metadata_list[0].block_tables is not None
-            input_metadata.to_send = coalesce_blocks([block
-                                                      for seq_group_metadata in seq_group_metadata_list
-                                                      for blocks in seq_group_metadata.block_tables.values()
-                                                      for block in blocks])
+            # input_metadata.to_send = coalesce_blocks([block
+            #                                           for seq_group_metadata in seq_group_metadata_list
+            #                                           for blocks in seq_group_metadata.block_tables.values()
+            #                                           for block in blocks])
             input_metadata.to_rank = to_rank
             input_metadata.transfer_stream = self.transfer_stream
 
         else:
-            input_metadata.to_send = []
+            # input_metadata.to_send = []
             input_metadata.to_rank = -1
 
         return (input_tokens, input_positions, input_metadata,
@@ -598,16 +598,13 @@ class ModelRunner:
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
         kv_buffers: List[Tuple[torch.Tensor, torch.Tensor]],
         to_rank: int,
-        conduit: asyncio.Queue,
+        s_kvc: SendKVCacheCoordinator,
     ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
          lora_requests,
          lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, to_rank)
 
-        input_metadata.conduit = conduit
-        input_metadata.memcpy_events = self.memcpy_events
-        input_metadata.recorded_memcpy_events = []
-
+        input_metadata.s_kvc = s_kvc
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)

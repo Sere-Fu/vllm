@@ -19,7 +19,7 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
-from vllm.utils import perf_execution
+from vllm.utils import perf_execution, SendKVCacheCoordinator
 
 
 class Worker:
@@ -228,9 +228,9 @@ class Worker:
     @torch.inference_mode()
     def prefill(
         self,
-        conduit: asyncio.Queue,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None,
         to_rank: Optional[int] = None,
+        s_kvc: SendKVCacheCoordinator = None
     ) -> Optional[SamplerOutput]:
         if self.is_driver_worker:
             assert seq_group_metadata_list is not None
@@ -251,7 +251,7 @@ class Worker:
                                                 self.gpu_cache,
                                                 self.kv_buffer,
                                                 to_rank,
-                                                conduit)
+                                                s_kvc)
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:

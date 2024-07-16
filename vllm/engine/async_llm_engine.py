@@ -19,7 +19,7 @@ from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SequenceGroupMetadata, SequenceGroup
-from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution
+from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution, SendKVCacheCoordinator
 
 logger = init_logger(__name__)
 
@@ -183,8 +183,9 @@ class _AsyncLLMEngine(LLMEngine):
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.transfer_thread = ThreadPoolExecutor(max_workers=1)
-        # self.to_t = asyncio.Queue()
-        # self.from_t = asyncio.Queue()
+        self.to_t = None
+        self.from_t = None
+        self.s_kvc = None
         self.wrapper = wrapper
 
     async def step_async(self) -> List[RequestOutput]:
@@ -198,6 +199,10 @@ class _AsyncLLMEngine(LLMEngine):
         the sequences and returns the newly generated results.
         """
         if get_engine_type() == EngineType.PREFILL:
+            if not self.s_kvc:
+                self.to_t = asyncio.Queue()
+                self.from_t = asyncio.Queue()
+                self.s_kvc = SendKVCacheCoordinator(self.to_t)
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("prefill")
         elif get_engine_type() == EngineType.DECODING:
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
@@ -222,9 +227,9 @@ class _AsyncLLMEngine(LLMEngine):
                 all_outputs = await self._run_workers_async(
                     "prefill",
                     driver_kwargs={
-                        "conduit": self.to_t,
                         "seq_group_metadata_list": seq_group_metadata_list,
                         "to_rank": 1,
+                        "s_kvc": self.s_kvc
                     })
             else:
                 print(f"scheduled decode {len(seq_group_metadata_list)}:", time.perf_counter(), file=sys.stderr)
@@ -403,9 +408,7 @@ class AsyncLLMEngine:
         self._background_loop_unshielded = None
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
-        self.receive_kv_cache_tasks: List[asyncio.Task] = []
 
-        self.irecv_executor = ThreadPoolExecutor(max_workers=1)
         self.io_stream = torch.cuda.Stream()
 
     @property
@@ -441,9 +444,6 @@ class AsyncLLMEngine:
                         request_tracker=self._request_tracker))
             self.websocket_to_decode_worker = asyncio.shield(self._websocket_to_decode_worker_unshielded)
 
-        self.engine.to_t = asyncio.Queue()
-        self.engine.from_t = asyncio.Queue()
-
     def _init_engine(self, *args,
                      **kwargs) -> Union[_AsyncLLMEngine, "ray.ObjectRef"]:
         if not self.engine_use_ray:
@@ -462,22 +462,6 @@ class AsyncLLMEngine:
             engine_class = ray.remote(num_gpus=num_gpus)(
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
-
-    # async def create_receive_kv_cache_task(self, to_receive: int) -> None:
-    #     task = self.irecv_executor.submit(partial(self.receive_kv_cache, to_receive))
-    #     self.receive_kv_cache_tasks.append(task)
-
-    def receive_kv_cache(self, to_receive: int):
-        assert get_engine_type() == EngineType.DECODING
-        num_layers = self.engine.model_config.get_num_layers(self.engine.parallel_config)
-
-        for i in range(num_layers):
-            key_cache, value_cache = self.engine.driver_worker.cache_engine.gpu_cache[i]
-            key_transfer_cache, value_transfer_cache = self.engine.driver_worker.cache_engine.cpu_cache[i]
-
-            for (start, l) in to_receive:
-                key_cache[start: start+l].copy_(key_transfer_cache[start: start+l], non_blocking=True)
-                value_cache[start: start+l].copy_(value_transfer_cache[start: start+l], non_blocking=True)
 
     async def engine_step(self) -> bool:
         """Kick the engine to process the waiting requests.

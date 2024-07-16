@@ -75,25 +75,6 @@ async def generate(request: Request) -> Response:
     ret = {"text": text_outputs}
     return JSONResponse(ret)
 
-
-@app.post("/ready_to_receive")
-async def ready_to_receive(request: Request) -> Response:
-    '''just send back ack for now, but in the future we can use this to update the kv cache with the received blocks'''
-    if not engine.is_running:
-        engine.start_background_loop()
-    request_dict = await request.json()
-    seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
-
-    if engine.engine.scheduler.block_manager.can_allocates(seq_groups):
-        for seq_group in seq_groups:
-            for seq in seq_group.get_seqs():
-                seq.status = SequenceStatus.WAITING
-            engine.engine.scheduler._allocate(seq_group)
-        ret = {"output": "yes"}
-    else:
-        ret = {"output": "no"}
-    return JSONResponse(ret)
-
 @app.websocket("/decode")
 async def decode(ws: WebSocket):
     if not engine.is_running:
