@@ -1,5 +1,7 @@
 import argparse
 import json
+import sys
+import pickle
 from typing import AsyncGenerator, Dict, List
 
 from fastapi import FastAPI, Request
@@ -94,19 +96,13 @@ async def ready_to_receive(request: Request) -> Response:
 
 @app.post("/decode")
 async def decode(request: Request) -> Response:
-    request_dict = await request.json()
-    seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
+    # request_dict = await request.json()
+    # seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
+    async for item in request.stream():
+        item = pickle.loads(item)
 
-    # for task in engine.receive_kv_cache_tasks:
-    #     # irecv_reqs = await task
-    #     irecv_reqs = task.result()
-    #     print(len(irecv_reqs))
-    #     for irecv_req in irecv_reqs:
-    #         irecv_req.wait()
-    #         assert irecv_req.is_completed()
-
-    engine.receive_kv_cache_tasks = []
-    engine.engine.scheduler.pre_running.extend(seq_groups)
+    print(type(item), file=sys.stderr)
+    engine.engine.scheduler.with_kv.extend(item)
     engine._request_tracker.new_requests_event.set()
 
     ret = {"output":  "ack"}

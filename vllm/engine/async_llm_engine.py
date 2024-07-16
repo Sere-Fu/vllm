@@ -4,6 +4,7 @@ import aiohttp
 import json
 import torch
 import sys
+import pickle
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
@@ -220,6 +221,7 @@ class _AsyncLLMEngine(LLMEngine):
             # Execute the model.
             if get_engine_type() == EngineType.PREFILL:
                 conduit = Conduit(b'end')
+                task = self.transfer_thread.submit(partial(self.decode_remote, conduit))
                 all_outputs = await self._run_workers_async(
                     "prefill",
                     driver_kwargs={
@@ -245,7 +247,10 @@ class _AsyncLLMEngine(LLMEngine):
 
         if get_engine_type() == EngineType.PREFILL:
             res = self._process_model_outputs(output, scheduler_outputs)
-            await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
+            # await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
+            conduit.append(pickle.dumps(scheduler_outputs.scheduled_seq_groups))
+            conduit.append(b'end')
+            task.result()
             return res
         else:
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
@@ -275,19 +280,15 @@ class _AsyncLLMEngine(LLMEngine):
 
         return output['output']
 
-    async def decode_remote(self,
-                            seq_groups: List[SequenceGroup]) -> Any:
-        pload = {
-            "encoded_seq_groups": marshalToB64String(seq_groups),
-        }
-
+    async def decode_remote(self, conduit: Conduit) -> Any:
+        print("kangsan debug decode remote", file=sys.stderr)
         timeout = aiohttp.ClientTimeout(total=3 * 3600)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while True:
                 async with session.post("http://127.0.0.1:8001/decode",
                                         headers={"User-Agent": "p-worker"},
-                                        json=pload) as response:
+                                        data=conduit) as response:
                     chunks = []
                     async for chunk, _ in response.content.iter_chunks():
                         chunks.append(chunk)
@@ -424,8 +425,6 @@ class AsyncLLMEngine:
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
         self.receive_kv_cache_tasks: List[asyncio.Task] = []
-        self.pre_running_requests: List[List[SequenceGroup]] = []
-        self.irecv_reqs: List[List[asyncio.Future]] = []
 
         self.irecv_executor = ThreadPoolExecutor(max_workers=1)
         self.io_stream = torch.cuda.Stream()
@@ -474,9 +473,9 @@ class AsyncLLMEngine:
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
 
-    async def create_receive_kv_cache_task(self, to_receive: int) -> None:
-        task = self.irecv_executor.submit(partial(self.receive_kv_cache, to_receive))
-        self.receive_kv_cache_tasks.append(task)
+    # async def create_receive_kv_cache_task(self, to_receive: int) -> None:
+    #     task = self.irecv_executor.submit(partial(self.receive_kv_cache, to_receive))
+    #     self.receive_kv_cache_tasks.append(task)
 
     def receive_kv_cache(self, to_receive: int):
         assert get_engine_type() == EngineType.DECODING
