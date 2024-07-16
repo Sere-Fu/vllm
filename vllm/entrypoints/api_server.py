@@ -1,8 +1,10 @@
 import argparse
 import json
+import sys
+import pickle
 from typing import AsyncGenerator, Dict, List
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 import uvicorn
 
@@ -92,25 +94,17 @@ async def ready_to_receive(request: Request) -> Response:
         ret = {"output": "no"}
     return JSONResponse(ret)
 
-@app.post("/decode")
-async def decode(request: Request) -> Response:
-    request_dict = await request.json()
-    seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
+@app.websocket("/decode")
+async def decode(ws: WebSocket):
+    await ws.accept()
+    print("prefill worker connected")
 
-    # for task in engine.receive_kv_cache_tasks:
-    #     # irecv_reqs = await task
-    #     irecv_reqs = task.result()
-    #     print(len(irecv_reqs))
-    #     for irecv_req in irecv_reqs:
-    #         irecv_req.wait()
-    #         assert irecv_req.is_completed()
+    while True:
+        data = await ws.receive_text()
+        seq_groups = unmarshalFromB64String(data)
 
-    engine.receive_kv_cache_tasks = []
-    engine.engine.scheduler.pre_running.extend(seq_groups)
-    engine._request_tracker.new_requests_event.set()
-
-    ret = {"output":  "ack"}
-    return JSONResponse(ret)
+        engine.engine.scheduler.with_kv.extend(seq_groups)
+        engine._request_tracker.new_requests_event.set()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

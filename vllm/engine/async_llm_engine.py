@@ -4,6 +4,7 @@ import aiohttp
 import json
 import torch
 import sys
+import pickle
 from functools import partial
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
@@ -182,6 +183,7 @@ class _AsyncLLMEngine(LLMEngine):
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.transfer_thread = ThreadPoolExecutor(max_workers=1)
+        self.conduit = Conduit()
         self.wrapper = wrapper
 
     async def step_async(self) -> List[RequestOutput]:
@@ -213,17 +215,13 @@ class _AsyncLLMEngine(LLMEngine):
 
             # print("scheduled prefill:", len(scheduler_outputs.scheduled_seq_groups))
 
-            # for seq_group_metadata in seq_group_metadata_list:
-                # seq_group_metadata.block_tables = bts.pop(0)
-
         if not scheduler_outputs.is_empty():
             # Execute the model.
             if get_engine_type() == EngineType.PREFILL:
-                conduit = Conduit(b'end')
                 all_outputs = await self._run_workers_async(
                     "prefill",
                     driver_kwargs={
-                        "conduit": conduit,
+                        "conduit": self.conduit,
                         "seq_group_metadata_list": seq_group_metadata_list,
                         "to_rank": 1,
                     })
@@ -245,7 +243,8 @@ class _AsyncLLMEngine(LLMEngine):
 
         if get_engine_type() == EngineType.PREFILL:
             res = self._process_model_outputs(output, scheduler_outputs)
-            await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
+            # await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
+            self.conduit.append(marshalToB64String(scheduler_outputs.scheduled_seq_groups))
             return res
         else:
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
@@ -274,29 +273,6 @@ class _AsyncLLMEngine(LLMEngine):
                     break
 
         return output['output']
-
-    async def decode_remote(self,
-                            seq_groups: List[SequenceGroup]) -> Any:
-        pload = {
-            "encoded_seq_groups": marshalToB64String(seq_groups),
-        }
-
-        timeout = aiohttp.ClientTimeout(total=3 * 3600)
-
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            while True:
-                async with session.post("http://127.0.0.1:8001/decode",
-                                        headers={"User-Agent": "p-worker"},
-                                        json=pload) as response:
-                    chunks = []
-                    async for chunk, _ in response.content.iter_chunks():
-                        chunks.append(chunk)
-                output = b"".join(chunks).decode("utf-8")
-                output = json.loads(output)
-
-                # Re-send the request if it failed.
-                if "error" not in output:
-                    break
 
     async def encode_request_async(
         self,
@@ -417,15 +393,15 @@ class AsyncLLMEngine:
         self.engine = self._init_engine(self, *args, **kwargs)
 
         self.background_loop = None
+        self.websocket_to_decode_worker = None
         # We need to keep a reference to unshielded
         # task as well to prevent it from being garbage
         # collected
+        self._websocket_to_decode_worker_unshielded = None
         self._background_loop_unshielded = None
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
         self.receive_kv_cache_tasks: List[asyncio.Task] = []
-        self.pre_running_requests: List[List[SequenceGroup]] = []
-        self.irecv_reqs: List[List[asyncio.Future]] = []
 
         self.irecv_executor = ThreadPoolExecutor(max_workers=1)
         self.io_stream = torch.cuda.Stream()
@@ -443,10 +419,12 @@ class AsyncLLMEngine:
 
         if get_engine_type() == EngineType.PREFILL:
             self._background_loop_unshielded = asyncio.get_event_loop(
-            ).create_task(self.run_engine_loop_prefill())
+                ).create_task(self.run_engine_loop_prefill())
+            self._websocket_to_decode_worker_unshielded = asyncio.get_event_loop(
+                ).create_task(self.open_websocket_to_decode_worker())
         elif get_engine_type() == EngineType.DECODING:
             self._background_loop_unshielded = asyncio.get_event_loop(
-            ).create_task(self.run_engine_loop_decode())
+                ).create_task(self.run_engine_loop_decode())
         else:
             raise ValueError(f"Unknown engine type {get_engine_type()}")
 
@@ -454,6 +432,12 @@ class AsyncLLMEngine:
             partial(_raise_exception_on_finish,
                     request_tracker=self._request_tracker))
         self.background_loop = asyncio.shield(self._background_loop_unshielded)
+
+        if get_engine_type() == EngineType.PREFILL:
+            self._websocket_to_decode_worker_unshielded.add_done_callback(
+                partial(_raise_exception_on_finish,
+                        request_tracker=self._request_tracker))
+            self.websocket_to_decode_worker = asyncio.shield(self._websocket_to_decode_worker_unshielded)
 
     def _init_engine(self, *args,
                      **kwargs) -> Union[_AsyncLLMEngine, "ray.ObjectRef"]:
@@ -474,9 +458,9 @@ class AsyncLLMEngine:
                 self._engine_class).remote
         return engine_class(*args, **kwargs)
 
-    async def create_receive_kv_cache_task(self, to_receive: int) -> None:
-        task = self.irecv_executor.submit(partial(self.receive_kv_cache, to_receive))
-        self.receive_kv_cache_tasks.append(task)
+    # async def create_receive_kv_cache_task(self, to_receive: int) -> None:
+    #     task = self.irecv_executor.submit(partial(self.receive_kv_cache, to_receive))
+    #     self.receive_kv_cache_tasks.append(task)
 
     def receive_kv_cache(self, to_receive: int):
         assert get_engine_type() == EngineType.DECODING
@@ -540,6 +524,13 @@ class AsyncLLMEngine:
             await self.engine.abort_request.remote(request_ids)
         else:
             self.engine.abort_request(request_ids)
+
+    async def open_websocket_to_decode_worker(self):
+        timeout = aiohttp.ClientTimeout(total=3 * 3600)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.ws_connect("http://127.0.0.1:8001/decode") as ws:
+                async for data in self.engine.conduit:
+                    await ws.send_str(data)
 
     async def run_engine_loop_prefill(self):
         # Initialize the RequestTracker here so it uses the right event loop.
