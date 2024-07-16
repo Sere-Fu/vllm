@@ -19,7 +19,7 @@ from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import SequenceGroupMetadata, SequenceGroup
-from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution, SendKVCacheCoordinator
+from vllm.utils import marshalToB64String, form_packet, PacketType, perf_execution, SendKVCacheCoordinator
 
 logger = init_logger(__name__)
 
@@ -213,8 +213,8 @@ class _AsyncLLMEngine(LLMEngine):
 
         if get_engine_type() == EngineType.PREFILL:
             while True:
-                packet = {'type': 'query_seq_groups', 'data': scheduler_outputs.scheduled_seq_groups}
-                self.to_t.put_nowait((True, marshalToB64String(packet)))
+                packet = form_packet(PacketType.QUERY, scheduler_outputs.scheduled_seq_groups)
+                self.to_t.put_nowait((True, packet))
                 ret = await self.from_t.get()
                 if ret == 'yes':
                     break
@@ -250,8 +250,8 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             res = self._process_model_outputs(output, scheduler_outputs)
             # await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
-            packet = {'type': 'transfer_seq_groups', 'data': scheduler_outputs.scheduled_seq_groups}
-            self.to_t.put_nowait((False, marshalToB64String(packet)))
+            packet = form_packet(PacketType.DECODE, scheduler_outputs.scheduled_seq_groups)
+            self.to_t.put_nowait((False, packet))
             return res
         else:
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
@@ -520,7 +520,7 @@ class AsyncLLMEngine:
             async with session.ws_connect("http://127.0.0.1:8001/decode") as ws:
                 while True:
                     expect_return, data = await self.engine.to_t.get()
-                    await ws.send_str(data)
+                    await ws.send_bytes(data)
                     if expect_return:
                         self.engine.from_t.put_nowait(await ws.receive_str())
                 # async for expect_return, data in self.engine.conduit:

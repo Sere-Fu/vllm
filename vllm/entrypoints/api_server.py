@@ -12,7 +12,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
-from vllm.utils import marshalToB64String, unmarshalFromB64String, coalesce_blocks
+from vllm.utils import unmarshalFromB64String, PacketType, get_packet_type
 from vllm.sequence import SequenceStatus
 from safetensors.torch import load
 
@@ -85,9 +85,10 @@ async def decode(ws: WebSocket):
     print("prefill worker connected")
 
     while True:
-        packet = unmarshalFromB64String(await ws.receive_text())
-        if packet['type'] == 'query_seq_groups':
-            seq_groups = packet['data']
+        packet = await ws.receive_bytes()
+        packet_type = get_packet_type(packet)
+        if packet_type ==  PacketType.QUERY:
+            seq_groups = pickle.loads(packet[1:])
             if engine.engine.scheduler.block_manager.can_allocates(seq_groups):
                 for seq_group in seq_groups:
                     for seq in seq_group.get_seqs():
@@ -99,18 +100,15 @@ async def decode(ws: WebSocket):
                 print(f"reject {len(seq_groups)} requests")
                 await ws.send_text("no")
 
-        if packet['type'] == 'transfer_kv':
-            d = packet['data']
-            ith = d['ith']
-            kv_dict = load(unmarshalFromB64String(d['kv_str']))
-            k = kv_dict['k']
-            v = kv_dict['v']
-            print(f"received {k.shape} {v.shape}")
+        if packet_type ==  PacketType.KV_CACHE:
+            ith = packet[1]
+            kv_dict = load(packet[2:])
+            print(f"received {ith} {kv_dict['k'].shape} {kv_dict['v'].shape}")
             # k.reshape
             # engine.engine.driver_worker.cpu_kv_buffer[i][0].copy_(k)
             # engine.engine.driver_worker.cpu_kv_buffer[i][1].copy_(v)
-        if packet['type'] == 'transfer_seq_groups':
-            seq_groups = packet['data']
+        if packet_type ==  PacketType.DECODE:
+            seq_groups = pickle.loads(packet[1:])
             print(f"received {len(seq_groups)} requests")
             engine.engine.scheduler.with_kv.extend(seq_groups)
             engine._request_tracker.new_requests_event.set()

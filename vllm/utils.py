@@ -42,6 +42,12 @@ class Device(enum.Enum):
     CPU = enum.auto()
 
 
+class PacketType(enum.Enum):
+    QUERY = enum.auto()
+    KV_CACHE = enum.auto()
+    DECODE = enum.auto()
+
+
 class Counter:
 
     def __init__(self, start: int = 0) -> None:
@@ -318,6 +324,20 @@ def coalesce_blocks(block_list: List[int]) -> List[Tuple[int, int]]:
     ret.append((current_block_start, current_block_length))
     return ret
 
+def form_packet(packet_type: PacketType, *items: Any) -> bytearray:
+    if packet_type == PacketType.QUERY:
+        assert len(items) == 1
+        return packet_type.value.to_bytes(1, 'big') + pickle.dumps(items[0])
+    if packet_type == PacketType.KV_CACHE:
+        assert len(items) == 2
+        return packet_type.value.to_bytes(1, 'big') + items[0].to_bytes(1, 'big') + items[1]
+    if packet_type == PacketType.DECODE:
+        assert len(items) == 1
+        return packet_type.value.to_bytes(1, 'big') + pickle.dumps(items[0])
+
+def get_packet_type(packet: bytearray) -> PacketType:
+    return PacketType(packet[0])
+
 class SendKVCacheCoordinator:
     def __init__(self, conduit: asyncio.Queue):
         self.conduit = conduit
@@ -330,9 +350,9 @@ class SendKVCacheCoordinator:
         tmp = len(self.wip)
         for i, (k, v, ith, event) in enumerate(self.wip):
             if event.query():
-                kv_str = marshalToB64String(save({'k': k, 'v': v}))
-                packet = { "type": "transfer_kv", "data": {'kv_str': kv_str, 'ith': ith}}
-                self.conduit.put_nowait((False, marshalToB64String(packet)))
+                kv_bytes = save({'k': k, 'v': v})
+                packet = form_packet(PacketType.KV_CACHE, ith, kv_bytes)
+                self.conduit.put_nowait((False, packet))
                 self.wip.pop(0)
             else:
                 print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
