@@ -109,10 +109,16 @@ class PagedAttention(nn.Module):
 
         if input_metadata.to_rank != -1:
             assert input_metadata.is_prompt
+            input_metadata.s_kvc.check()
+
             num_slots = key.shape[0]
             print(f"kangsan debug {key.shape}", file=sys.stderr)
             key_buffer[:num_slots].copy_(key, non_blocking=True)
             value_buffer[:num_slots].copy_(value, non_blocking=True)
+
+            event = torch.cuda.Event()
+            event.record()
+            input_metadata.s_kvc.submit(key_buffer[:num_slots], value_buffer[:num_slots], ith, event)
 
         if input_metadata.is_prompt:
             # Prompt run.

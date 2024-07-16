@@ -14,6 +14,7 @@ from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
 from vllm.utils import marshalToB64String, unmarshalFromB64String, coalesce_blocks
 from vllm.sequence import SequenceStatus
+from safetensors.torch import load
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
@@ -99,12 +100,15 @@ async def decode(ws: WebSocket):
                 await ws.send_text("no")
 
         if packet['type'] == 'transfer_kv':
-            # k, v, i, slots = packet['data']
+            d = packet['data']
+            ith = d['ith']
+            kv_dict = load(unmarshalFromB64String(d['kv_str']))
+            k = kv_dict['k']
+            v = kv_dict['v']
+            print(f"received {k.shape} {v.shape}")
             # k.reshape
             # engine.engine.driver_worker.cpu_kv_buffer[i][0].copy_(k)
             # engine.engine.driver_worker.cpu_kv_buffer[i][1].copy_(v)
-
-            pass
         if packet['type'] == 'transfer_seq_groups':
             seq_groups = packet['data']
             print(f"received {len(seq_groups)} requests")
@@ -135,4 +139,6 @@ if __name__ == "__main__":
                 log_level="debug",
                 timeout_keep_alive=TIMEOUT_KEEP_ALIVE,
                 ssl_keyfile=args.ssl_keyfile,
-                ssl_certfile=args.ssl_certfile)
+                ssl_certfile=args.ssl_certfile,
+                ws_max_size=1024*1024*1024,
+                ws_max_queue=512)

@@ -22,6 +22,7 @@ from typing import (
 )
 from collections import OrderedDict
 from typing import Any, Hashable, Optional
+from safetensors.torch import save
 
 from vllm.logger import init_logger
 
@@ -322,15 +323,18 @@ class SendKVCacheCoordinator:
         self.conduit = conduit
         self.wip = []
 
-    def submit(self, k, v, i, event):
-        self.wip.append((k, v, i, event))
+    def submit(self, k, v, ith, event):
+        self.wip.append((k, v, ith, event))
 
     def check(self):
-        for i, (k, v, event) in enumerate(self.wip):
+        tmp = len(self.wip)
+        for i, (k, v, ith, event) in enumerate(self.wip):
             if event.query():
-                packet = { "type": "transfer_kv", "data": (k, v, i)}
+                kv_str = marshalToB64String(save({'k': k, 'v': v}))
+                packet = { "type": "transfer_kv", "data": {'kv_str': kv_str, 'ith': ith}}
                 self.conduit.put_nowait((False, marshalToB64String(packet)))
                 self.wip.pop(0)
             else:
-                print(f"wip {len(self.wip)}, completed {i}")
+                print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
                 break
+            print(f"wip {len(self.wip)}, completed {tmp}", file=sys.stderr)
