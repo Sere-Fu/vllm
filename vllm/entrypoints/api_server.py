@@ -100,11 +100,10 @@ async def decode(ws: WebSocket):
     print("prefill worker connected")
 
     while True:
-        data = await ws.receive_text()
-        seq_groups = unmarshalFromB64String(data)
-
-        engine.engine.scheduler.with_kv.extend(seq_groups)
-        engine._request_tracker.new_requests_event.set()
+        packet = unmarshalFromB64String(await ws.receive_text())
+        if packet['type'] == 'seq_groups':
+            engine.engine.scheduler.with_kv.extend(packet['data'])
+            engine._request_tracker.new_requests_event.set()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

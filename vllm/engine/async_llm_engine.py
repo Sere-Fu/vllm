@@ -226,7 +226,7 @@ class _AsyncLLMEngine(LLMEngine):
                         "to_rank": 1,
                     })
             else:
-                print("scheduled decode:", time.perf_counter(), file=sys.stderr)
+                print(f"scheduled decode {len(seq_group_metadata_list)}:", time.perf_counter(), file=sys.stderr)
                 all_outputs = await self._run_workers_async(
                     "execute_model",
                     driver_kwargs={
@@ -244,7 +244,8 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             res = self._process_model_outputs(output, scheduler_outputs)
             # await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
-            self.conduit.append(marshalToB64String(scheduler_outputs.scheduled_seq_groups))
+            packet = {'type': 'seq_groups', 'data': scheduler_outputs.scheduled_seq_groups}
+            self.conduit.append(marshalToB64String(packet))
             return res
         else:
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
