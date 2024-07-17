@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 import uvicorn
 
+from vllm.core.scheduler import AllocStatus
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
@@ -104,7 +105,7 @@ async def decode(ws: WebSocket):
         if packet_type ==  PacketType.QUERY:
             seq_groups = pickle.loads(packet[1:])
 
-            if scheduler.block_manager.can_allocates(seq_groups):
+            if scheduler.block_manager.can_allocates(seq_groups) == AllocStatus.OK:
                 slot_mapping: List[List[int]] = []
                 max_prompt_len = 0
                 for seq_group in seq_groups:
