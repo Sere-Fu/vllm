@@ -410,6 +410,7 @@ class AsyncLLMEngine:
         self._request_tracker = RequestTracker()
 
         self.io_stream = torch.cuda.Stream()
+        self.pre_batch_finished = 0
 
     @property
     def is_running(self) -> bool:
@@ -494,7 +495,9 @@ class AsyncLLMEngine:
 
         if request_outputs:
             if request_outputs[0].finished:
-                print(f"batch decode {len(request_outputs)} finished:", time.perf_counter(), file=sys.stderr)
+                now = time.perf_counter()
+                print(f"batch decode {len(request_outputs)} finished takes {now-self.pre_batch_finished} s at {now}:", file=sys.stderr)
+                self.pre_batch_finished = now
 
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
@@ -523,10 +526,6 @@ class AsyncLLMEngine:
                     await ws.send_bytes(data)
                     if expect_return:
                         self.engine.from_t.put_nowait(await ws.receive_str())
-                # async for expect_return, data in self.engine.conduit:
-                #     await ws.send_str(data)
-                #     if expect_return:
-                #         self.engine.from_decode_worker.put_nowait(await ws.receive_str())
 
     async def run_engine_loop_prefill(self):
         # Initialize the RequestTracker here so it uses the right event loop.
@@ -544,7 +543,9 @@ class AsyncLLMEngine:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
                 self._request_tracker.new_requests_event.clear()
+            start = time.perf_counter()
             has_requests_in_progress = await self.engine_step()
+            print(f"engine step: {time.perf_counter() - start} s", file=sys.stderr)
             print("\n", file=sys.stderr)
             await asyncio.sleep(0)
 

@@ -556,10 +556,10 @@ class ModelRunner:
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
     ) -> Optional[SamplerOutput]:
-        with perf_execution("ModelRunner.execute_model.prepare_input_tensors".rjust(60, ' ')):
-            (input_tokens, input_positions, input_metadata, sampling_metadata,
-            lora_requests,
-            lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, -1)
+        # with perf_execution("ModelRunner.execute_model.prepare_input_tensors".rjust(60, ' ')):
+        (input_tokens, input_positions, input_metadata, sampling_metadata,
+        lora_requests,
+        lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, -1)
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)

@@ -134,6 +134,7 @@ async def decode(ws: WebSocket):
                                                     pad=-1,
                                                     dtype=torch.long,
                                                     device='cuda')
+                # print(f"current slot mapping {current_slot_mapping}", file=sys.stderr)
 
                 print(f"prove {len(seq_groups)} requests")
                 await ws.send_text("yes")
@@ -144,7 +145,7 @@ async def decode(ws: WebSocket):
         if packet_type ==  PacketType.KV_CACHE:
             ith = packet[1]
             kv_dict = load(packet[2:])
-            print(f"received {ith} {kv_dict['k'].shape} {kv_dict['v'].shape}")
+            # print(f"received {ith} {kv_dict['k'].shape} {kv_dict['v'].shape}")
 
             r_kvc.check()
 
@@ -161,8 +162,7 @@ async def decode(ws: WebSocket):
         if packet_type ==  PacketType.DECODE:
             seq_groups = pickle.loads(packet[1:])
             print(f"received {len(seq_groups)} requests")
-            scheduler.with_kv.extend(seq_groups)
-            request_tracker.new_requests_event.set()
+            scheduler.without_kv.extend(seq_groups)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     uvicorn.run(app,
                 host=args.host,
                 port=args.port,
-                log_level="debug",
+                log_level="info",
                 timeout_keep_alive=TIMEOUT_KEEP_ALIVE,
                 ssl_keyfile=args.ssl_keyfile,
                 ssl_certfile=args.ssl_certfile,

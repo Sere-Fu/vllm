@@ -348,17 +348,17 @@ class SendKVCacheCoordinator:
         self.wip.append((k, v, ith, event))
 
     def check(self):
-        tmp = len(self.wip)
         for i, (k, v, ith, event) in enumerate(self.wip):
             if event.query():
                 kv_bytes = save({'k': k, 'v': v})
                 packet = form_packet(PacketType.KV_CACHE, ith, kv_bytes)
                 self.conduit.put_nowait((False, packet))
-                self.wip.pop(0)
             else:
+                self.wip = self.wip[i:]
                 print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
-                break
-            print(f"wip {len(self.wip)}, completed {tmp}", file=sys.stderr)
+                return
+        print(f"wip 0, completed {len(self.wip)}", file=sys.stderr)
+        self.wip.clear()
 
 class RecvKVCacheCoordinator:
     def __init__(self, num_layers, gpu_cache):
@@ -370,7 +370,6 @@ class RecvKVCacheCoordinator:
         self.wip.append((k, v, ith, slot_mapping, event))
 
     def check(self):
-        tmp = len(self.wip)
         for i, (k, v, ith, slot_mapping, event) in enumerate(self.wip):
             if event.query():
                 cache_ops.reshape_and_cache(
@@ -381,9 +380,9 @@ class RecvKVCacheCoordinator:
                     slot_mapping.flatten(),
                     "auto"
                 )
-                self.wip.pop(0)
             else:
+                self.wip = self.wip[i:]
                 print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
                 return i
-            print(f"wip {len(self.wip)}, completed {tmp}", file=sys.stderr)
-            return tmp
+        print(f"wip 0, completed {len(self.wip)}", file=sys.stderr)
+        self.wip.clear()
