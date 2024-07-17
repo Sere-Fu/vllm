@@ -25,6 +25,7 @@ from typing import Any, Hashable, Optional
 from safetensors.torch import save
 
 from vllm.logger import init_logger
+from vllm._C import cache_ops
 
 T = TypeVar("T")
 logger = init_logger(__name__)
@@ -358,3 +359,31 @@ class SendKVCacheCoordinator:
                 print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
                 break
             print(f"wip {len(self.wip)}, completed {tmp}", file=sys.stderr)
+
+class RecvKVCacheCoordinator:
+    def __init__(self, num_layers, gpu_cache):
+        self.num_layers = num_layers
+        self.gpu_cache = gpu_cache
+        self.wip = []
+
+    def submit(self, k, v, ith, slot_mapping, event):
+        self.wip.append((k, v, ith, slot_mapping, event))
+
+    def check(self):
+        tmp = len(self.wip)
+        for i, (k, v, ith, slot_mapping, event) in enumerate(self.wip):
+            if event.query():
+                cache_ops.reshape_and_cache(
+                    k,
+                    v,
+                    self.gpu_cache[ith][0],
+                    self.gpu_cache[ith][1],
+                    slot_mapping.flatten(),
+                    "auto"
+                )
+                self.wip.pop(0)
+            else:
+                print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
+                return i
+            print(f"wip {len(self.wip)}, completed {tmp}", file=sys.stderr)
+            return tmp

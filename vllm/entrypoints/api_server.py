@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 import pickle
+import torch
 from typing import AsyncGenerator, Dict, List
 
 from fastapi import FastAPI, Request, WebSocket
@@ -12,8 +13,9 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
-from vllm.utils import unmarshalFromB64String, PacketType, get_packet_type
-from vllm.sequence import SequenceStatus
+from vllm.utils import PacketType, get_packet_type, RecvKVCacheCoordinator
+from vllm.sequence import SequenceStatus, Sequence
+from vllm.worker.model_runner import _make_tensor_with_pad
 from safetensors.torch import load
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
@@ -84,16 +86,55 @@ async def decode(ws: WebSocket):
     await ws.accept()
     print("prefill worker connected")
 
+    _engine = engine.engine
+    scheduler = _engine.scheduler
+    block_size = scheduler.block_manager.block_size
+    request_tracker = engine._request_tracker
+    gpu_cache = _engine.driver_worker.gpu_cache
+    num_layers = _engine.model_config.get_num_layers(_engine.parallel_config)
+
+    current_slot_mapping = None
+
+    r_kvc = RecvKVCacheCoordinator(num_layers, gpu_cache)
+
+
     while True:
         packet = await ws.receive_bytes()
         packet_type = get_packet_type(packet)
         if packet_type ==  PacketType.QUERY:
             seq_groups = pickle.loads(packet[1:])
-            if engine.engine.scheduler.block_manager.can_allocates(seq_groups):
+
+            if scheduler.block_manager.can_allocates(seq_groups):
+                slot_mapping: List[List[int]] = []
+                max_prompt_len = 0
                 for seq_group in seq_groups:
+                    seq: Sequence = seq_group.get_seqs()[0]
+                    prompt_len = len(seq.data.get_token_ids())
+                    if prompt_len > max_prompt_len:
+                        max_prompt_len = prompt_len
+                    slot_mapping.append([])
                     for seq in seq_group.get_seqs():
                         seq.status = SequenceStatus.WAITING
-                    engine.engine.scheduler._allocate(seq_group)
+                    scheduler._allocate(seq_group)
+                    block_table = scheduler.block_manager.get_block_table(seq)
+
+                    start_idx = 0
+                    for i in range(prompt_len):
+                        if i < start_idx:
+                            slot_mapping[-1].append(-1)
+                            continue
+
+                        block_number = block_table[i // block_size]
+                        block_offset = i % block_size
+                        slot = block_number * block_size + block_offset
+                        slot_mapping[-1].append(slot)
+
+                current_slot_mapping = _make_tensor_with_pad(slot_mapping,
+                                                    max_prompt_len,
+                                                    pad=-1,
+                                                    dtype=torch.long,
+                                                    device='cuda')
+
                 print(f"prove {len(seq_groups)} requests")
                 await ws.send_text("yes")
             else:
@@ -104,14 +145,24 @@ async def decode(ws: WebSocket):
             ith = packet[1]
             kv_dict = load(packet[2:])
             print(f"received {ith} {kv_dict['k'].shape} {kv_dict['v'].shape}")
+
+            r_kvc.check()
+
+            k_gpu = kv_dict['k'].to('cuda', non_blocking=True)
+            v_gpu = kv_dict['v'].to('cuda', non_blocking=True)
+
+            event = torch.cuda.Event()
+            event.record()
             # k.reshape
             # engine.engine.driver_worker.cpu_kv_buffer[i][0].copy_(k)
             # engine.engine.driver_worker.cpu_kv_buffer[i][1].copy_(v)
+            r_kvc.submit(k_gpu, v_gpu, ith, current_slot_mapping, event)
+
         if packet_type ==  PacketType.DECODE:
             seq_groups = pickle.loads(packet[1:])
             print(f"received {len(seq_groups)} requests")
-            engine.engine.scheduler.with_kv.extend(seq_groups)
-            engine._request_tracker.new_requests_event.set()
+            scheduler.with_kv.extend(seq_groups)
+            request_tracker.new_requests_event.set()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
