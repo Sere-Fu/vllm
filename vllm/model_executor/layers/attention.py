@@ -67,8 +67,6 @@ class PagedAttention(nn.Module):
         value: torch.Tensor,
         key_cache: Optional[torch.Tensor],
         value_cache: Optional[torch.Tensor],
-        key_buffer: Optional[torch.Tensor],
-        value_buffer: Optional[torch.Tensor],
         input_metadata: InputMetadata,
         ith: int,
     ) -> torch.Tensor:
@@ -107,12 +105,14 @@ class PagedAttention(nn.Module):
                     input_metadata.kv_cache_dtype,
                 )
 
-        if input_metadata.to_rank != -1:
+        if hasattr(input_metadata, 'to_rank') and input_metadata.to_rank != -1:
             assert input_metadata.is_prompt
             input_metadata.s_kvc.check()
 
             num_slots = key.shape[0]
             print(f"kangsan debug {key.shape}", file=sys.stderr)
+            key_buffer = input_metadata.kv_buffers[ith][0]
+            value_buffer = input_metadata.kv_buffers[ith][1]
             key_buffer[:num_slots].copy_(key, non_blocking=True)
             value_buffer[:num_slots].copy_(value, non_blocking=True)
 

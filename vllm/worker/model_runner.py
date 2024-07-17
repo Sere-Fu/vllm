@@ -571,15 +571,11 @@ class ModelRunner:
         else:
             model_executable = self.model
 
-        num_layers = self.model_config.get_num_layers(self.parallel_config)
-        kv_buffers = [(None, None)] * num_layers
-
         with perf_execution("ModelRunner.execute_model.forward".rjust(60, ' ')):
             hidden_states = model_executable(
                 input_ids=input_tokens,
                 positions=input_positions,
                 kv_caches=kv_caches,
-                kv_buffers=kv_buffers,
                 input_metadata=input_metadata,
             )
 
@@ -605,6 +601,7 @@ class ModelRunner:
          lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, to_rank)
 
         input_metadata.s_kvc = s_kvc
+        input_metadata.kv_buffers = kv_buffers
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)
@@ -619,7 +616,6 @@ class ModelRunner:
             input_ids=input_tokens,
             positions=input_positions,
             kv_caches=kv_caches,
-            kv_buffers=kv_buffers,
             input_metadata=input_metadata,
         )
 
