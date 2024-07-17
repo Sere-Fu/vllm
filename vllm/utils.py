@@ -361,10 +361,15 @@ class SendKVCacheCoordinator:
         self.wip.clear()
 
 class RecvKVCacheCoordinator:
-    def __init__(self, num_layers, gpu_cache):
+    def __init__(self, num_layers, gpu_cache, without_kv, with_kv, request_tracker):
         self.num_layers = num_layers
         self.gpu_cache = gpu_cache
+        self.with_out_kv = without_kv
+        self.with_kv = with_kv
+        self.request_tracker = request_tracker
+
         self.wip = []
+        self.layers_done = 0
 
     def submit(self, k, v, ith, slot_mapping, event):
         self.wip.append((k, v, ith, slot_mapping, event))
@@ -383,6 +388,18 @@ class RecvKVCacheCoordinator:
             else:
                 self.wip = self.wip[i:]
                 print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
-                return i
+                accumulated_completed = i + self.layers_done
+                self.layers_done = accumulated_completed % self.num_layers
+                for _ in range(accumulated_completed // self.num_layers):
+                    self.with_kv.extend(self.with_out_kv.pop(0))
+                    self.request_tracker.new_requests_event.set()
+                return
+
+        accumulated_completed = len(self.wip) + self.layers_done
+        self.layers_done = accumulated_completed % self.num_layers
+        for _ in range(accumulated_completed // self.num_layers):
+            self.with_kv.extend(self.with_out_kv.pop(0))
+            self.request_tracker.new_requests_event.set()
+
         print(f"wip 0, completed {len(self.wip)}", file=sys.stderr)
         self.wip.clear()

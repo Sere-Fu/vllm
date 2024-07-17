@@ -95,7 +95,7 @@ async def decode(ws: WebSocket):
 
     current_slot_mapping = None
 
-    r_kvc = RecvKVCacheCoordinator(num_layers, gpu_cache)
+    r_kvc = RecvKVCacheCoordinator(num_layers, gpu_cache, scheduler.without_kv, scheduler.with_kv, request_tracker)
 
 
     while True:
@@ -162,7 +162,7 @@ async def decode(ws: WebSocket):
         if packet_type ==  PacketType.DECODE:
             seq_groups = pickle.loads(packet[1:])
             print(f"received {len(seq_groups)} requests")
-            scheduler.without_kv.extend(seq_groups)
+            scheduler.without_kv.append(seq_groups)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
