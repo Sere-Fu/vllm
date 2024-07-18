@@ -5,6 +5,7 @@ from typing import (AsyncIterator, Callable, Dict, Iterable, List, Optional,
                     Set, Tuple, Type, Union)
 
 from transformers import PreTrainedTokenizer
+import torch
 
 import vllm.envs as envs
 from vllm.config import DecodingConfig, ModelConfig
@@ -230,6 +231,28 @@ class _AsyncLLMEngine(LLMEngine):
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
+            if any(ssg.seq_group.sampling_params.dendpoint for ssg in scheduler_outputs.scheduled_seq_groups):
+                assert len(scheduler_outputs.scheduled_seq_groups) == 1
+                seq_group = scheduler_outputs.scheduled_seq_groups[0].seq_group
+                meta = seq_group_metadata_list[0]
+                if meta.is_prompt:
+                    import torch.distributed as dist
+                    import aiohttp
+                    async def notify_dendpoint():
+                        data = {
+                            'model': self.model_executor.model_config.model,
+                            'prompt': seq_group.prompt,
+                            'max_tokens': seq_group.sampling_params.max_tokens,
+                            'temperature': seq_group.sampling_params.temperature,
+                            'prank': dist.get_rank(),
+                        }
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(seq_group.sampling_params.dendpoint, json=data) as response:
+                                async for chunk in response.content.iter_any():
+                                    print(chunk)
+                    asyncio.create_task(notify_dendpoint())
+
+
             execute_model_req = ExecuteModelRequest(
                 seq_group_metadata_list=seq_group_metadata_list,
                 blocks_to_swap_in=scheduler_outputs.blocks_to_swap_in,

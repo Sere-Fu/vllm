@@ -354,6 +354,8 @@ def get_ip() -> str:
         stacklevel=2)
     return "0.0.0.0"
 
+def get_rank():
+    return envs.VLLM_RANK
 
 def get_distributed_init_method(ip: str, port: int) -> str:
     # Brackets are not permitted in ipv4 addresses,
@@ -364,6 +366,7 @@ def get_distributed_init_method(ip: str, port: int) -> str:
 def get_open_port() -> int:
     port = envs.VLLM_PORT
     if port is not None:
+        return port
         while True:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

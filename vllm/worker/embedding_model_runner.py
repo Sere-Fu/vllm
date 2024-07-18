@@ -16,7 +16,7 @@ from vllm.worker.model_runner import GPUModelRunnerBase, ModelInputForGPU
 logger = init_logger(__name__)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=False)
 class ModelInputForGPUWithPoolingMetadata(ModelInputForGPU):
     """
     Used by the EmbeddingModelRunner.

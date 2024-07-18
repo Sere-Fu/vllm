@@ -700,6 +700,14 @@ class GroupCoordinator:
         if self.mq_broadcaster is not None:
             self.mq_broadcaster = None
 
+class DummyGroupCoordinator(GroupCoordinator):
+    def __init__(self):
+        self.world_size = 1
+        self.rank = envs.LOCAL_RANK
+        self.rank_in_group = envs.LOCAL_RANK
+        self.ranks = [envs.LOCAL_RANK]
+        self.ca_comm = None
+
 
 _WORLD: Optional[GroupCoordinator] = None
 
@@ -800,6 +808,8 @@ def init_distributed_environment(
     local_rank: int = -1,
     backend: str = "nccl",
 ):
+    if envs.VLLM_WORLD is not None:
+        world_size = envs.VLLM_WORLD
     logger.debug(
         "world_size=%d rank=%d local_rank=%d "
         "distributed_init_method=%s backend=%s", world_size, rank, local_rank,
@@ -832,6 +842,60 @@ def init_distributed_environment(
         assert _WORLD.world_size == torch.distributed.get_world_size(), (
             "world group already initialized with a different world size")
 
+
+import torch.distributed as dist
+from collections import deque
+class KVCacheCoordinator:
+    MAX_WIP = 400
+
+    def __init__(self):
+        self.pending = deque()
+        self.wip = deque()
+        self.p2p_group = dist.new_group(list(range(dist.get_world_size())))
+
+    def _invoke(self, buf, op, cb):
+        assert len(self.pending) < KVCacheCoordinator.MAX_WIP * 4, "Too many pending IO OPs"
+        if len(self.wip) < KVCacheCoordinator.MAX_WIP:
+            self.wip.append((buf, op(), cb))
+        else:
+            self.pending.append((buf, op, cb))
+
+    def isend(self, buf, dst, cb=None):
+        self._invoke(buf, lambda: dist.isend(buf, dst=dst), cb)
+
+    def irecv(self, buf, src, cb=None):
+        self._invoke(buf, lambda: dist.irecv(buf, src=src), cb)
+
+    def complete_io_and_dispatch_pending(self):
+        nwip = len(self.wip)
+        while self.wip:
+            buf, h, cb = self.wip[0]
+            if h.is_completed():
+                if cb is not None:
+                    cb()
+                self.wip.popleft()
+            else:
+                break
+        if nwip != len(self.wip):
+            print(f'👾completed={nwip-len(self.wip)}, wip={len(self.wip)}, pending={len(self.pending)}')
+        while self.pending:
+            if len(self.wip) < KVCacheCoordinator.MAX_WIP:
+                buf, op, cb = self.pending.popleft()
+                self.wip.append((buf, op(), cb))
+            else:
+                break
+
+_KVCC = None
+
+def initialize_kvcc():
+    global _KVCC
+    if _KVCC is None:
+        _KVCC = KVCacheCoordinator()
+    return _KVCC
+
+def get_kvcc():
+    assert _KVCC is not None, "KVCC is not initialized"
+    return _KVCC
 
 def initialize_model_parallel(
     tensor_model_parallel_size: int = 1,
@@ -866,8 +930,13 @@ def initialize_model_parallel(
     backend = backend or torch.distributed.get_backend(
         get_world_group().device_group)
 
+    global _TP
+    global _PP
     if (world_size !=
             tensor_model_parallel_size * pipeline_model_parallel_size):
+        _TP = DummyGroupCoordinator()
+        _PP = DummyGroupCoordinator()
+        return
         raise RuntimeError(
             f"world_size ({world_size}) is not equal to "
             f"tensor_model_parallel_size ({tensor_model_parallel_size}) x "
@@ -876,7 +945,6 @@ def initialize_model_parallel(
     # Build the tensor model-parallel groups.
     num_tensor_model_parallel_groups: int = (world_size //
                                              tensor_model_parallel_size)
-    global _TP
     assert _TP is None, ("tensor model parallel group is already initialized")
     group_ranks = []
     for i in range(num_tensor_model_parallel_groups):
@@ -894,7 +962,6 @@ def initialize_model_parallel(
     # Build the pipeline model-parallel groups.
     num_pipeline_model_parallel_groups: int = (world_size //
                                                pipeline_model_parallel_size)
-    global _PP
     assert _PP is None, (
         "pipeline model parallel group is already initialized")
     group_ranks = []

@@ -12,6 +12,7 @@ from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
                          SpeculativeConfig)
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment,
+                              initialize_kvcc,
                               set_custom_all_reduce)
 from vllm.lora.request import LoRARequest
 from vllm.model_executor import set_random_seed
@@ -119,7 +120,7 @@ class Worker(LocalOrDistributedWorkerBase):
 
             # This env var set by Ray causes exceptions with graph building.
             os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
-            self.device = torch.device(f"cuda:{self.local_rank}")
+            self.device = torch.device("cuda:0")
             torch.cuda.set_device(self.device)
 
             _check_if_gpu_supports_dtype(self.model_config.dtype)
@@ -342,9 +343,9 @@ def init_worker_distributed_environment(
 
     init_distributed_environment(parallel_config.world_size, rank,
                                  distributed_init_method, local_rank)
-
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
-                                      parallel_config.pipeline_parallel_size)
+                                    parallel_config.pipeline_parallel_size)
+    initialize_kvcc()
 
 
 def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype):

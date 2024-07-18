@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 if TYPE_CHECKING:
     VLLM_HOST_IP: str = ""
     VLLM_PORT: Optional[int] = None
+    VLLM_WORLD: int = 1
+    VLLM_RANK: int = 0
     VLLM_USE_MODELSCOPE: bool = False
     VLLM_RINGBUFFER_WARNING_INTERVAL: int = 60
     VLLM_INSTANCE_ID: Optional[str] = None
@@ -251,6 +253,11 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     lambda: os.getenv("VLLM_XLA_CACHE_PATH", "~/.vllm/xla_cache/"),
     "VLLM_FUSED_MOE_CHUNK_SIZE":
     lambda: int(os.getenv("VLLM_FUSED_MOE_CHUNK_SIZE", "65536")),
+
+    "VLLM_WORLD":
+    lambda: int(os.getenv("VLLM_WORLD", "1")),
+    "VLLM_RANK": 
+    lambda: int(os.getenv("VLLM_RANK", "0")),
 }
 
 # end-env-vars-definition

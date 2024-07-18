@@ -268,6 +268,16 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             intermediate_tensors = IntermediateTensors(
                 get_pp_group().recv_tensor_dict())
 
+        if any(sgm.sampling_params.dendpoint or sgm.sampling_params.prank is not None\
+               for sgm in execute_model_req.seq_group_metadata_list):
+            assert len(execute_model_req.seq_group_metadata_list) == 1
+            if execute_model_req.seq_group_metadata_list[0].is_prompt:
+                sampling_params = execute_model_req.seq_group_metadata_list[0].sampling_params
+                if sampling_params.dendpoint:
+                    model_input.drank = 1 # FIXME: determine drank by endpoint
+                else:
+                    model_input.prank = sampling_params.prank
+
         output = self.model_runner.execute_model(
             model_input, self.kv_cache[worker_input.virtual_engine]
             if self.kv_cache is not None else None, intermediate_tensors,

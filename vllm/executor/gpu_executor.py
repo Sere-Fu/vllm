@@ -6,7 +6,7 @@ from vllm.lora.request import LoRARequest
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sequence import ExecuteModelRequest, PoolerOutput, SamplerOutput
 from vllm.utils import (get_distributed_init_method, get_ip, get_open_port,
-                        make_async)
+                        get_rank, make_async)
 from vllm.worker.worker_base import WorkerWrapperBase
 
 logger = init_logger(__name__)
@@ -33,6 +33,8 @@ class GPUExecutor(ExecutorBase):
         if distributed_init_method is None:
             distributed_init_method = get_distributed_init_method(
                 get_ip(), get_open_port())
+        rank = get_rank()
+        local_rank = rank
         return dict(
             model_config=self.model_config,
             parallel_config=self.parallel_config,
