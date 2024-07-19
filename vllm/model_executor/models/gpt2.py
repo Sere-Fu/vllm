@@ -81,15 +81,13 @@ class GPT2Attention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         kv_cache: KVCache,
-        kv_buffer: KVCache,
         input_metadata: InputMetadata,
         ith: int,
     ) -> torch.Tensor:
         qkv, _ = self.c_attn(hidden_states)
         q, k, v = qkv.chunk(chunks=3, dim=-1)
         key_cache, value_cache = kv_cache
-        key_buffer, value_buffer = kv_buffer
-        attn_output = self.attn(q, k, v, key_cache, value_cache, key_buffer, value_buffer,
+        attn_output = self.attn(q, k, v, key_cache, value_cache,
                                 input_metadata, ith)
         attn_output, _ = self.c_proj(attn_output)
         return attn_output
@@ -149,7 +147,6 @@ class GPT2Block(nn.Module):
         self,
         hidden_states: torch.Tensor,
         kv_cache: KVCache,
-        kv_buffer: KVCache,
         input_metadata: InputMetadata,
         ith: int,
     ) -> torch.Tensor:
@@ -158,7 +155,6 @@ class GPT2Block(nn.Module):
         attn_output = self.attn(
             hidden_states=hidden_states,
             kv_cache=kv_cache,
-            kv_buffer=kv_buffer,
             input_metadata=input_metadata,
             ith=ith
         )
@@ -199,7 +195,6 @@ class GPT2Model(nn.Module):
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         kv_caches: List[KVCache],
-        kv_buffers: List[KVCache],
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
         inputs_embeds = self.wte(input_ids)
@@ -208,7 +203,7 @@ class GPT2Model(nn.Module):
 
         for i in range(len(self.h)):
             layer = self.h[i]
-            hidden_states = layer(hidden_states, kv_caches[i], kv_buffers[i], input_metadata, i)
+            hidden_states = layer(hidden_states, kv_caches[i], input_metadata, i)
 
         hidden_states = self.ln_f(hidden_states)
         return hidden_states
@@ -233,10 +228,9 @@ class GPT2LMHeadModel(nn.Module):
         input_ids: torch.Tensor,
         positions: torch.Tensor,
         kv_caches: List[KVCache],
-        kv_buffers: List[KVCache],
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
-        hidden_states = self.transformer(input_ids, positions, kv_caches, kv_buffers,
+        hidden_states = self.transformer(input_ids, positions, kv_caches,
                                          input_metadata)
         return hidden_states
 
