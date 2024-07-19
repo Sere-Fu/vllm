@@ -213,7 +213,7 @@ class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
 
     async def step_async(
-        self, virtual_engine: int
+        self, virtual_engine: int, _request_tracker
     ) -> List[Union[RequestOutput, EmbeddingRequestOutput]]:
         """Performs one decoding iteration and returns newly generated results.
         The workers are ran asynchronously if possible.
@@ -230,28 +230,45 @@ class _AsyncLLMEngine(LLMEngine):
             virtual_engine].get_and_reset_finished_requests_ids()
 
         if not scheduler_outputs.is_empty():
+            output_future = None
             # Execute the model.
-            if any(ssg.seq_group.sampling_params.dendpoint for ssg in scheduler_outputs.scheduled_seq_groups):
-                assert len(scheduler_outputs.scheduled_seq_groups) == 1
+            if any(ssg.seq_group.sampling_params.dendpoint or ssg.seq_group.sampling_params.prank is not None\
+                    for ssg in scheduler_outputs.scheduled_seq_groups):
                 seq_group = scheduler_outputs.scheduled_seq_groups[0].seq_group
                 meta = seq_group_metadata_list[0]
                 if meta.is_prompt:
-                    import torch.distributed as dist
-                    import aiohttp
-                    async def notify_dendpoint():
-                        data = {
-                            'model': self.model_executor.model_config.model,
-                            'prompt': seq_group.prompt,
-                            'max_tokens': seq_group.sampling_params.max_tokens,
-                            'temperature': seq_group.sampling_params.temperature,
-                            'prank': dist.get_rank(),
-                        }
-                        async with aiohttp.ClientSession() as session:
-                            async with session.post(seq_group.sampling_params.dendpoint, json=data) as response:
-                                async for chunk in response.content.iter_any():
-                                    print(chunk)
-                    asyncio.create_task(notify_dendpoint())
-
+                    assert len(scheduler_outputs.scheduled_seq_groups) == 1
+                    if seq_group.sampling_params.dendpoint: #P
+                        import torch.distributed as dist
+                        import aiohttp
+                        async def notify_dendpoint():
+                            data = {
+                                'model': self.model_executor.model_config.model,
+                                'prompt': seq_group.prompt,
+                                'max_tokens': seq_group.sampling_params.max_tokens,
+                                'temperature': seq_group.sampling_params.temperature,
+                                'prank': dist.get_rank(),
+                            }
+                            async with aiohttp.ClientSession() as session:
+                                async with session.post(seq_group.sampling_params.dendpoint, json=data) as response:
+                                    async for chunk in response.content.iter_any():
+                                        print(chunk)
+                        asyncio.create_task(notify_dendpoint())
+                    else: # T
+                        assert seq_group.sampling_params.prank is not None
+                        output_future = asyncio.get_event_loop().create_future()
+                        async def continuation():
+                            await output_future
+                            output = output_future.result()
+                            request_outputs = self._process_model_outputs(
+                                output, scheduler_outputs.scheduled_seq_groups,
+                                scheduler_outputs.ignored_seq_groups, seq_group_metadata_list)
+                            self.do_log_stats(scheduler_outputs, output)
+                            self.do_tracing(scheduler_outputs)
+                            for request_output in request_outputs:
+                                _request_tracker.process_request_output(request_output)
+                            self.scheduler[virtual_engine].running.append(seq_group)
+                        asyncio.create_task(continuation())
 
             execute_model_req = ExecuteModelRequest(
                 seq_group_metadata_list=seq_group_metadata_list,
@@ -261,9 +278,11 @@ class _AsyncLLMEngine(LLMEngine):
                 virtual_engine=virtual_engine,
                 num_lookahead_slots=scheduler_outputs.num_lookahead_slots,
                 running_queue_size=scheduler_outputs.running_queue_size,
-                finished_requests_ids=finished_requests_ids)
+                finished_requests_ids=finished_requests_ids,
+                output_future=output_future)
             output = await self.model_executor.execute_model_async(
                 execute_model_req)
+            if not output: return []
         else:
             output = []
 
@@ -573,7 +592,7 @@ class AsyncLLMEngine:
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()  # type: ignore
         else:
-            request_outputs = await self.engine.step_async(virtual_engine)
+            request_outputs = await self.engine.step_async(virtual_engine, self._request_tracker)
 
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:

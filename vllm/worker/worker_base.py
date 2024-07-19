@@ -270,13 +270,14 @@ class LocalOrDistributedWorkerBase(WorkerBase):
 
         if any(sgm.sampling_params.dendpoint or sgm.sampling_params.prank is not None\
                for sgm in execute_model_req.seq_group_metadata_list):
-            assert len(execute_model_req.seq_group_metadata_list) == 1
             if execute_model_req.seq_group_metadata_list[0].is_prompt:
+                assert len(execute_model_req.seq_group_metadata_list) == 1
                 sampling_params = execute_model_req.seq_group_metadata_list[0].sampling_params
-                if sampling_params.dendpoint:
+                if sampling_params.dendpoint: # P
                     model_input.drank = 1 # FIXME: determine drank by endpoint
-                else:
+                else: # T
                     model_input.prank = sampling_params.prank
+                    model_input.output_future = execute_model_req.output_future
 
         output = self.model_runner.execute_model(
             model_input, self.kv_cache[worker_input.virtual_engine]
