@@ -350,8 +350,13 @@ class SendKVCacheCoordinator:
     def check(self):
         for i, (k, v, ith, event) in enumerate(self.wip):
             if event.query():
-                kv_bytes = save({'k': k, 'v': v})
-                packet = form_packet(PacketType.KV_CACHE, ith, kv_bytes)
+                kbs = k.numpy().tobytes()
+                vbs = v.numpy().tobytes()
+                # kv_bytes = save({'k': k, 'v': v})
+                # kv_bytes = tbs + vbs
+                packet = form_packet(PacketType.KV_CACHE, ith, kbs)
+                self.conduit.put_nowait((False, packet))
+                packet = form_packet(PacketType.KV_CACHE, ith, vbs)
                 self.conduit.put_nowait((False, packet))
             else:
                 self.wip = self.wip[i:]
@@ -371,15 +376,15 @@ class RecvKVCacheCoordinator:
         self.wip = []
         self.layers_done = 0
 
-    def submit(self, k, v, ith, slot_mapping, event):
-        self.wip.append((k, v, ith, slot_mapping, event))
+    def submit(self, kc, vc, kg, vg, ith, slot_mapping, event):
+        self.wip.append((kc, vc, kg, vg, ith, slot_mapping, event))
 
     def check(self):
-        for i, (k, v, ith, slot_mapping, event) in enumerate(self.wip):
+        for i, (_, _, kg, vg, ith, slot_mapping, event) in enumerate(self.wip):
             if event.query():
                 cache_ops.reshape_and_cache(
-                    k,
-                    v,
+                    kg,
+                    vg,
                     self.gpu_cache[ith][0],
                     self.gpu_cache[ith][1],
                     slot_mapping.flatten(),

@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+import time
 import pickle
 import torch
 from typing import AsyncGenerator, Dict, List
@@ -99,6 +100,9 @@ async def decode(ws: WebSocket):
     r_kvc = RecvKVCacheCoordinator(num_layers, gpu_cache, scheduler.without_kv, scheduler.with_kv, request_tracker)
 
 
+    is_k = True
+    last_k_cpu_pin = None
+    last_k_gpu = None
     while True:
         packet = await ws.receive_bytes()
         packet_type = get_packet_type(packet)
@@ -144,21 +148,55 @@ async def decode(ws: WebSocket):
                 await ws.send_text("no")
 
         if packet_type ==  PacketType.KV_CACHE:
+            m0 = time.perf_counter()
             ith = packet[1]
-            kv_dict = load(packet[2:])
+            kv_bytes = packet[2:]
+            l = len(kv_bytes)//2
+
             # print(f"received {ith} {kv_dict['k'].shape} {kv_dict['v'].shape}")
 
+            print(f"----------------check time: {1000 * (time.perf_counter()-m0)} ms", file=sys.stderr)
+
+            # k_bytes = kv_bytes[:l]
+            # v_bytes = kv_bytes[l:]
+
             r_kvc.check()
+            m1 = time.perf_counter()
 
-            k_gpu = kv_dict['k'].to('cuda', non_blocking=True)
-            v_gpu = kv_dict['v'].to('cuda', non_blocking=True)
+            kv_cpu = torch.frombuffer(kv_bytes, dtype=torch.float16)
+            # v_cpu = torch.frombuffer(v_bytes, dtype=torch.float16)
 
-            event = torch.cuda.Event()
-            event.record()
+            m7 = time.perf_counter()
+            print(f"----------------de-s time: {1000 * (m7-m1)} ms", file=sys.stderr)
+
+            kv_cpu = kv_cpu.reshape(-1, 8, 128)
+            # k_cpu = v_cpu.reshape(-1, 8, 128)
+
+            m2 = time.perf_counter()
+            print(f"----------------reshape time: {1000 * (m2-m7)} ms", file=sys.stderr)
+
+            kv_cpu_pin = kv_cpu.pin_memory()
+            # v_cpu_pin = v_cpu.pin_memory()
+
+            m3 = time.perf_counter()
+            print(f"----------------pin time: {1000 * (m3-m2)} ms", file=sys.stderr)
+            kv_gpu = kv_cpu_pin.to('cuda', non_blocking=True)
+            # v_gpu = v_cpu_pin.to('cuda', non_blocking=True)
+
+            print(f"----------------async time: {1000 * (time.perf_counter()-m3)} ms", file=sys.stderr)
+
+            if is_k:
+                last_k_cpu_pin = kv_cpu_pin
+                last_k_gpu = kv_gpu
+                is_k = False
+            else:
+                event = torch.cuda.Event()
+                event.record()
+                r_kvc.submit(last_k_cpu_pin, kv_cpu_pin, last_k_gpu, kv_gpu, ith, current_slot_mapping, event)
+                is_k = True
             # k.reshape
             # engine.engine.driver_worker.cpu_kv_buffer[i][0].copy_(k)
             # engine.engine.driver_worker.cpu_kv_buffer[i][1].copy_(v)
-            r_kvc.submit(k_gpu, v_gpu, ith, current_slot_mapping, event)
 
         if packet_type ==  PacketType.DECODE:
             seq_groups = pickle.loads(packet[1:])
