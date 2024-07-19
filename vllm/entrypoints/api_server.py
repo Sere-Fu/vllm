@@ -170,6 +170,10 @@ async def decode(ws: WebSocket):
             print(f"----------------de-s time: {1000 * (m7-m1)} ms", file=sys.stderr)
 
             kv_cpu = kv_cpu.reshape(-1, 8, 128)
+            # if is_k:
+            #     kv_cpu = kv_cpu.reshape(-1, 8, 16, 16, 8)
+            # else:
+            #     kv_cpu = kv_cpu.reshape(-1, 8, 128, 16)
             # k_cpu = v_cpu.reshape(-1, 8, 128)
 
             m2 = time.perf_counter()
@@ -180,20 +184,18 @@ async def decode(ws: WebSocket):
 
             m3 = time.perf_counter()
             print(f"----------------pin time: {1000 * (m3-m2)} ms", file=sys.stderr)
-            kv_gpu = kv_cpu_pin.to('cuda', non_blocking=True)
+            with torch.cuda.stream(engine.async_io_stream):
+                kv_gpu = kv_cpu_pin.to('cuda', non_blocking=True)
             # v_gpu = v_cpu_pin.to('cuda', non_blocking=True)
-
-            print(f"----------------async time: {1000 * (time.perf_counter()-m3)} ms", file=sys.stderr)
-
-            if is_k:
-                last_k_cpu_pin = kv_cpu_pin
-                last_k_gpu = kv_gpu
-                is_k = False
-            else:
-                event = torch.cuda.Event()
-                event.record()
-                r_kvc.submit(last_k_cpu_pin, kv_cpu_pin, last_k_gpu, kv_gpu, ith, current_slot_mapping, event)
-                is_k = True
+                if is_k:
+                    last_k_cpu_pin = kv_cpu_pin
+                    last_k_gpu = kv_gpu
+                    is_k = False
+                else:
+                    event = torch.cuda.Event()
+                    event.record()
+                    r_kvc.submit(last_k_cpu_pin, kv_cpu_pin, last_k_gpu, kv_gpu, ith, current_slot_mapping, event)
+                    is_k = True
             # k.reshape
             # engine.engine.driver_worker.cpu_kv_buffer[i][0].copy_(k)
             # engine.engine.driver_worker.cpu_kv_buffer[i][1].copy_(v)

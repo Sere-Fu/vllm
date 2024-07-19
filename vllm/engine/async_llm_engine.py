@@ -409,7 +409,7 @@ class AsyncLLMEngine:
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
 
-        self.io_stream = torch.cuda.Stream()
+        self.async_io_stream = torch.cuda.Stream()
         self.pre_batch_finished = 0
 
     @property
