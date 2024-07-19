@@ -350,7 +350,7 @@ class SendKVCacheCoordinator:
         self.wip.append((k, v, ith, event))
 
     def check(self):
-        for i, (k, v, ith, event) in enumerate(self.wip):
+        for i, (k, v, _, event) in enumerate(self.wip):
             if event.query():
                 packet = form_packet(PacketType.KV_CACHE, k)
                 self.conduit.put_nowait((False, packet))
@@ -358,9 +358,7 @@ class SendKVCacheCoordinator:
                 self.conduit.put_nowait((False, packet))
             else:
                 self.wip = self.wip[i:]
-                print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
                 return
-        print(f"wip 0, completed {len(self.wip)}", file=sys.stderr)
         self.wip.clear()
 
 class RecvKVCacheCoordinator:
@@ -390,7 +388,6 @@ class RecvKVCacheCoordinator:
                 )
             else:
                 self.wip = self.wip[i:]
-                print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
                 accumulated_completed = i + self.layers_done
                 self.layers_done = accumulated_completed % self.num_layers
                 for _ in range(accumulated_completed // self.num_layers):
@@ -404,5 +401,4 @@ class RecvKVCacheCoordinator:
             self.with_kv.extend(self.with_out_kv.pop(0))
             self.request_tracker.new_requests_event.set()
 
-        print(f"wip 0, completed {len(self.wip)}", file=sys.stderr)
         self.wip.clear()

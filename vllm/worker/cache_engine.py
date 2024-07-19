@@ -160,8 +160,29 @@ class CacheEngine:
                 event = self.events[i]
                 event.record(stream=self.cache_stream)
 
+    def _swap_layerwise(
+        self,
+        src: List[KVCache],
+        dst: List[KVCache],
+        i: int,
+        src_to_dst: Dict[int, int],
+    ) -> None:
+        with torch.cuda.stream(self.cache_stream):
+                src_key_cache, src_value_cache = src[i]
+                dst_key_cache, dst_value_cache = dst[i]
+                # Copy the key blocks.
+                cache_ops.swap_blocks(src_key_cache, dst_key_cache, src_to_dst)
+                # Copy the value blocks.
+                cache_ops.swap_blocks(src_value_cache, dst_value_cache,
+                                      src_to_dst)
+                event = self.events[i]
+                event.record(stream=self.cache_stream)
+
     def swap_in(self, src_to_dst: Dict[int, int]) -> None:
         self._swap(self.cpu_cache, self.gpu_cache, src_to_dst)
+
+    def swap_in_layerwise(self, i: int, src_to_dst: Dict[int, int]) -> None:
+        self._swap_layerwise(self.cpu_cache, self.gpu_cache, i, src_to_dst)
 
     def swap_out(self, src_to_dst: Dict[int, int]) -> None:
         self._swap(self.gpu_cache, self.cpu_cache, src_to_dst)

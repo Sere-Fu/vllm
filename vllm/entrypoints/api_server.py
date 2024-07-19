@@ -98,6 +98,7 @@ async def decode(ws: WebSocket):
     num_layers = _engine.model_config.get_num_layers(_engine.parallel_config)
 
     current_block_tables = []
+    src_to_dst = {}
 
     # r_kvc = RecvKVCacheCoordinator(num_layers, gpu_cache, scheduler.without_kv, scheduler.with_kv, request_tracker)
 
@@ -106,12 +107,13 @@ async def decode(ws: WebSocket):
     # batch_frames = num_layers * 2 + 1
     is_query = True
     ith = 0
+    checked_events = 0
 
     is_k = True
     while True:
         ith %= num_layers
-        # packet_type = get_packet_type(current_frame_index, batch_frames)
         packet = await ws.receive_bytes()
+        start = time.perf_counter()
         if len(packet) > 1000000:
             packet_type = PacketType.KV_CACHE
         else:
@@ -122,7 +124,6 @@ async def decode(ws: WebSocket):
                 packet_type = PacketType.DECODE
                 is_query = True
 
-        print("kangsan debug", packet_type, len(packet), file=sys.stderr)
         if packet_type ==  PacketType.QUERY:
             seq_groups = pickle.loads(packet)
 
@@ -141,84 +142,57 @@ async def decode(ws: WebSocket):
                     block_table = scheduler.block_manager.get_block_table(seq)
                     current_block_tables.extend(block_table)
 
-                    # start_idx = 0
-                    # for i in range(prompt_len):
-                    #     if i < start_idx:
-                    #         slot_mapping[-1].append(-1)
-                    #         continue
-
-                    #     block_number = block_table[i // block_size]
-                    #     block_offset = i % block_size
-                    #     slot = block_number * block_size + block_offset
-                    #     slot_mapping[-1].append(slot)
-
-                # current_slot_mapping = _make_tensor_with_pad(slot_mapping,
-                #                                     max_prompt_len,
-                #                                     pad=-1,
-                #                                     dtype=torch.long,
-                #                                     device='cuda')
-                # # print(f"current slot mapping {current_slot_mapping}", file=sys.stderr)
-
                 print(f"prove {len(seq_groups)} requests")
                 await ws.send_text("yes")
             else:
                 print(f"reject {len(seq_groups)} requests")
                 await ws.send_text("no")
 
-        if packet_type ==  PacketType.KV_CACHE:
-            m0 = time.perf_counter()
+        elif packet_type ==  PacketType.KV_CACHE:
+            if ith % 16 == 0:
+                s = time.perf_counter()
+                for event in cache_engine.events[checked_events:]:
+                    if event.query():
+                        checked_events += 1
 
+                if checked_events == num_layers:
+                    if scheduler.without_kv:
+                        scheduler.with_kv.extend(scheduler.without_kv.pop(0))
+                        request_tracker.new_requests_event.set()
+                    checked_events == 0
 
-            # r_kvc.check()
-            if ith == 16:
-                for event in cache_engine.events:
-                    event.wait()
-
-                if scheduler.without_kv:
-                    scheduler.with_kv.extend(scheduler.without_kv.pop(0))
-                    request_tracker.new_requests_event.set()
-                print(f"----------------check time: {1000 * (time.perf_counter()-m0)} ms", file=sys.stderr)
-
-            m1 = time.perf_counter()
+                print(f"check takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
             kv_cpu = torch.frombuffer(packet, dtype=torch.float16)
 
-            m7 = time.perf_counter()
-            print(f"----------------de-s time: {1000 * (m7-m1)} ms", file=sys.stderr)
-
-            m2 = time.perf_counter()
-            print(f"----------------reshape time: {1000 * (m2-m7)} ms", file=sys.stderr)
-
             if is_k:
                 kv_cpu_reshape = kv_cpu.reshape(-1, 8, 16, 16, 8)
-                bs = kv_cpu_reshape.shape[0]
-                print("kangsan debug", bs)
+                if ith == 0:
+                    bs = kv_cpu_reshape.shape[0]
+                    src_to_dst = {i: current_block_tables[i] for i in range(bs)}
                 cpu_cache[ith][0][:bs].copy_(kv_cpu_reshape)
-                m3 = time.perf_counter()
-                print(f"----------------pin time: {1000 * (m3-m2)} ms", file=sys.stderr)
                 is_k = False
             else:
                 kv_cpu_reshape = kv_cpu.reshape(-1, 8, 128, 16)
                 bs = kv_cpu_reshape.shape[0]
-                print("kangsan debug", bs)
                 cpu_cache[ith][1][:bs].copy_(kv_cpu_reshape)
-                m3 = time.perf_counter()
-                print(f"----------------pin time: {1000 * (m3-m2)} ms", file=sys.stderr)
 
-                if ith == num_layers:
-                    src_to_dst = {i: block_table[i] for i in range(bs)}
-                    cache_engine.swap_in(cpu_cache, gpu_cache, src_to_dst)
-                    # r_kvc.submit(last_k_cpu_pin, kv_cpu_pin, last_k_gpu, kv_gpu, ith, current_slot_mapping, event)
+                s = time.perf_counter()
+                cache_engine.swap_in_layerwise(ith, src_to_dst)
+                print(f"swap in {ith} takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
                 is_k = True
                 ith += 1
 
-        if packet_type ==  PacketType.DECODE:
+        elif packet_type ==  PacketType.DECODE:
+            s = time.perf_counter()
             seq_groups = pickle.loads(packet)
             print(f"received {len(seq_groups)} requests")
             scheduler.without_kv.append(seq_groups)
+            print(f"niubi takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
-        # current_frame_index = (current_frame_index + 1) % batch_frames
+        print(f"process {packet_type} takes: {1000 * (time.perf_counter() - start)} ms", file=sys.stderr)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default=None)
