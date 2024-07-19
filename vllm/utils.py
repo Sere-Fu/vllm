@@ -327,17 +327,19 @@ def coalesce_blocks(block_list: List[int]) -> List[Tuple[int, int]]:
 
 def form_packet(packet_type: PacketType, *items: Any) -> bytearray:
     if packet_type == PacketType.QUERY:
-        assert len(items) == 1
-        return packet_type.value.to_bytes(1, 'big') + pickle.dumps(items[0])
+        return pickle.dumps(items[0])
     if packet_type == PacketType.KV_CACHE:
-        assert len(items) == 2
-        return packet_type.value.to_bytes(1, 'big') + items[0].to_bytes(1, 'big') + items[1]
+        return items[0].numpy().tobytes()
     if packet_type == PacketType.DECODE:
-        assert len(items) == 1
-        return packet_type.value.to_bytes(1, 'big') + pickle.dumps(items[0])
+        return pickle.dumps(items[0])
 
-def get_packet_type(packet: bytearray) -> PacketType:
-    return PacketType(packet[0])
+def get_packet_type(current_frame_index, batch_frames) -> PacketType:
+    if current_frame_index == 0:
+        return PacketType.QUERY
+    elif current_frame_index == batch_frames:
+        return PacketType.DECODE
+    else:
+        return PacketType.KV_CACHE
 
 class SendKVCacheCoordinator:
     def __init__(self, conduit: asyncio.Queue):
@@ -350,13 +352,9 @@ class SendKVCacheCoordinator:
     def check(self):
         for i, (k, v, ith, event) in enumerate(self.wip):
             if event.query():
-                kbs = k.numpy().tobytes()
-                vbs = v.numpy().tobytes()
-                # kv_bytes = save({'k': k, 'v': v})
-                # kv_bytes = tbs + vbs
-                packet = form_packet(PacketType.KV_CACHE, ith, kbs)
+                packet = form_packet(PacketType.KV_CACHE, k)
                 self.conduit.put_nowait((False, packet))
-                packet = form_packet(PacketType.KV_CACHE, ith, vbs)
+                packet = form_packet(PacketType.KV_CACHE, v)
                 self.conduit.put_nowait((False, packet))
             else:
                 self.wip = self.wip[i:]
