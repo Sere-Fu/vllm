@@ -1,6 +1,8 @@
 import asyncio
 import time
 from functools import partial
+import sys
+import torch
 from typing import (Any, Dict, Iterable, List, Optional, Set, Tuple, Type,
                     Union, AsyncIterator)
 
@@ -171,6 +173,9 @@ class RequestTracker:
 
 class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.is_decode_run = False
 
     async def step_async(self) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
@@ -185,6 +190,10 @@ class _AsyncLLMEngine(LLMEngine):
         seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
 
         if not scheduler_outputs.is_empty():
+            if seq_group_metadata_list[0].is_prompt:
+                self.is_decode_run = False
+            else:
+                self.is_decode_run = True
             # Execute the model.
             all_outputs = await self._run_workers_async(
                 "execute_model",
@@ -327,6 +336,7 @@ class AsyncLLMEngine:
         self._background_loop_unshielded = None
         self.start_engine_loop = start_engine_loop
         self._request_tracker = RequestTracker()
+        self.pre_batch_finished = 0
 
     @property
     def is_running(self) -> bool:
@@ -388,6 +398,14 @@ class AsyncLLMEngine:
             request_outputs = await self.engine.step.remote()
         else:
             request_outputs = await self.engine.step_async()
+
+        if request_outputs:
+            if not self.engine.is_decode_run:
+                now = time.perf_counter()
+                self.pre_batch_finished = now
+            elif request_outputs[0].finished:
+                now = time.perf_counter()
+                print(f"batch decode {len(request_outputs)} finished takes {now-self.pre_batch_finished} s at {now}, waiting: {len(self.engine.scheduler.waiting)}", file=sys.stderr)
 
         # Put the outputs into the corresponding streams.
         for request_output in request_outputs:
