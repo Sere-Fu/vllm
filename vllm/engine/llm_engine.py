@@ -5,6 +5,8 @@ import os
 import time
 from typing import (TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple,
                     Union)
+import torch.multiprocessing as mp
+from torch.multiprocessing.spawn import spawn
 
 from vllm.lora.request import LoRARequest
 from vllm.config import (CacheConfig, DeviceConfig, ModelConfig,
@@ -130,6 +132,8 @@ class LLMEngine:
         else:
             self._init_workers()
 
+        self._init_messager()
+
         # Profile the memory usage and initialize the cache.
         self._init_cache()
 
@@ -180,6 +184,17 @@ class LLMEngine:
         )
         self._run_workers("init_model")
         self._run_workers("load_model")
+
+    def _init_messager(self):
+        self._task_queue = mp.Queue()
+        self._data_queue = mp.Queue()
+        self.messager = spawn(
+            fn = None,
+            args=(self._task_queue, self._data_queue),
+            daemon=True,
+            join=False,
+        )
+        pass
 
     def _init_tokenizer(self, **tokenizer_init_kwargs):
         init_kwargs = dict(
@@ -824,7 +839,7 @@ class LLMEngine:
             >>>     if not (engine.has_unfinished_requests() or example_inputs):
             >>>         break
         """
-        seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
+        seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule('mixed')
 
         if not scheduler_outputs.is_empty():
             # Execute the model.

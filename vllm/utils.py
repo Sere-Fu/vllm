@@ -2,6 +2,7 @@ import enum
 import os
 import sys
 from contextlib import contextmanager
+import time
 import socket
 import subprocess
 import uuid
@@ -137,6 +138,15 @@ def perf_execution(perf_item):
     torch.cuda.synchronize()
     elapsed_time_ms = start_event.elapsed_time(end_event)
     print(f"{perf_item}: {elapsed_time_ms} ms", file=sys.stderr)
+
+@contextmanager
+def time_execution(perf_item):
+    start = time.perf_counter()
+
+    yield
+
+    torch.cuda.synchronize()
+    print(f"{perf_item}: {1000 * (time.perf_counter() - start)} ms", file=sys.stderr)
 
 
 def is_hip() -> bool:
@@ -350,9 +360,10 @@ class SendKVCacheCoordinator:
     def check(self):
         for i, (k, v, ith, event) in enumerate(self.wip):
             if event.query():
-                kv_bytes = save({'k': k, 'v': v})
-                packet = form_packet(PacketType.KV_CACHE, ith, kv_bytes)
-                self.conduit.put_nowait((False, packet))
+                pass
+                # kv_bytes = save({'k': k, 'v': v})
+                # packet = form_packet(PacketType.KV_CACHE, ith, kv_bytes)
+                # self.conduit.put_nowait((False, packet))
             else:
                 self.wip = self.wip[i:]
                 print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)

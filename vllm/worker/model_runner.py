@@ -571,20 +571,18 @@ class ModelRunner:
         else:
             model_executable = self.model
 
-        with perf_execution("ModelRunner.execute_model.forward".rjust(60, ' ')):
-            hidden_states = model_executable(
-                input_ids=input_tokens,
-                positions=input_positions,
-                kv_caches=kv_caches,
-                input_metadata=input_metadata,
-            )
+        hidden_states = model_executable(
+            input_ids=input_tokens,
+            positions=input_positions,
+            kv_caches=kv_caches,
+            input_metadata=input_metadata,
+        )
 
         # Sample the next token.
-        with perf_execution("ModelRunner.execute_model.sample".rjust(60, ' ')):
-            output = self.model.sample(
-                hidden_states=hidden_states,
-                sampling_metadata=sampling_metadata,
-            )
+        output = self.model.sample(
+            hidden_states=hidden_states,
+            sampling_metadata=sampling_metadata,
+        )
         return output
 
     @torch.inference_mode()

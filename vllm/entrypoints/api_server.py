@@ -143,23 +143,6 @@ async def decode(ws: WebSocket):
                 print(f"reject {len(seq_groups)} requests")
                 await ws.send_text("no")
 
-        if packet_type ==  PacketType.KV_CACHE:
-            ith = packet[1]
-            kv_dict = load(packet[2:])
-            # print(f"received {ith} {kv_dict['k'].shape} {kv_dict['v'].shape}")
-
-            r_kvc.check()
-
-            k_gpu = kv_dict['k'].to('cuda', non_blocking=True)
-            v_gpu = kv_dict['v'].to('cuda', non_blocking=True)
-
-            event = torch.cuda.Event()
-            event.record()
-            # k.reshape
-            # engine.engine.driver_worker.cpu_kv_buffer[i][0].copy_(k)
-            # engine.engine.driver_worker.cpu_kv_buffer[i][1].copy_(v)
-            r_kvc.submit(k_gpu, v_gpu, ith, current_slot_mapping, event)
-
         if packet_type ==  PacketType.DECODE:
             seq_groups = pickle.loads(packet[1:])
             print(f"received {len(seq_groups)} requests")
