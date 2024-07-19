@@ -498,6 +498,7 @@ class CompletionRequest(OpenAIBaseModel):
             truncate_prompt_tokens=self.truncate_prompt_tokens,
             dendpoint=self.dendpoint,
             prank=self.prank,
+            stream=self.stream,
         )
 
     @model_validator(mode="before")

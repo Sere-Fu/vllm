@@ -135,7 +135,8 @@ class SamplingParams:
         logits_processors: Optional[List[LogitsProcessor]] = None,
         truncate_prompt_tokens: Optional[Annotated[int, Field(ge=1)]] = None,
         dendpoint: Optional[str] = None,
-        prank: Optional[int] = None
+        prank: Optional[int] = None,
+        stream: Optional[bool] = None,
 
     ) -> None:
         self.n = n
@@ -200,6 +201,7 @@ class SamplingParams:
         self.all_stop_token_ids = set(self.stop_token_ids)
         self.dendpoint = dendpoint
         self.prank = prank
+        self.stream = stream
 
     def _verify_args(self) -> None:
         if self.n < 1:

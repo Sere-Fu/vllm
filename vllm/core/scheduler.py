@@ -822,7 +822,9 @@ class Scheduler:
         self.waiting.extendleft(running_scheduled.preempted)
         # Update new running requests.
         self.running = remaining_running
-        if any(s.seq_group.sampling_params.prank is not None for s in prefills.seq_groups):
+        if any(s.seq_group.sampling_params.prank is not None or\
+                s.seq_group.sampling_params.dendpoint is not None \
+                    for s in prefills.seq_groups):
             assert len(prefills.seq_groups) == 1
             print('🎃not put to running, will schedule it later')
         else:

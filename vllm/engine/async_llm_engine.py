@@ -247,12 +247,14 @@ class _AsyncLLMEngine(LLMEngine):
                                 'prompt': seq_group.prompt,
                                 'max_tokens': seq_group.sampling_params.max_tokens,
                                 'temperature': seq_group.sampling_params.temperature,
+                                'stream': seq_group.sampling_params.stream,
                                 'prank': dist.get_rank(),
                             }
                             async with aiohttp.ClientSession() as session:
                                 async with session.post(seq_group.sampling_params.dendpoint, json=data) as response:
                                     async for chunk in response.content.iter_any():
-                                        print(chunk)
+                                        _request_tracker.process_request_output(RequestOutput(seq_group.request_id, None, None, None, None, None, override_bytes=chunk))
+                            _request_tracker.abort_request(seq_group.request_id)
                         asyncio.create_task(notify_dendpoint())
                     else: # T
                         assert seq_group.sampling_params.prank is not None
