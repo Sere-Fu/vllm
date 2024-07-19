@@ -1349,7 +1349,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         if model_input.attn_metadata.prefill_metadata is not None and model_input.prank is not None:
             def mkcb(i, k_buf, v_buf):
                 def cb():
-                    print(f'👹recv kv: shape={k_buf.shape}, k={id(k_buf)}, v={id(v_buf)}')
+                    # print(f'👹recv kv: shape={k_buf.shape}, k={id(k_buf)}, v={id(v_buf)}')
                     key_cache = kv_caches[i][0]
                     value_cache = kv_caches[i][1]
                     ops.reshape_and_cache_flash(
@@ -1361,10 +1361,11 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                         self.kv_cache_dtype,
                     )
                 return cb
+            # print(f'👹 starts to recv {self.model.config.num_hidden_layers*2} tensors')
             kvcc = get_kvcc()
             for i in range(self.model.config.num_hidden_layers):
-                heads = self.model.config.num_kv_heads if hasattr(self.model.config, 'num_kv_heads') else self.model.config.num_attention_heads
-                shape = (model_input.input_tokens.shape[0], heads, self.model.config.hidden_size//heads)
+                kv_heads = self.model.config.num_key_value_heads if hasattr(self.model.config, 'num_key_value_heads') else self.model.config.num_attention_heads
+                shape = (model_input.input_tokens.shape[0], kv_heads, self.model.config.hidden_size//self.model.config.num_attention_heads)
                 k_buf = torch.empty(shape, dtype=self.model_config.dtype, device=self.device)
                 v_buf = torch.empty(shape, dtype=self.model_config.dtype, device=self.device)
                 kvcc.irecv(k_buf, src=model_input.prank)
@@ -1372,7 +1373,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             logits_buf = torch.empty((1, self.vocab_size), dtype=self.model_config.dtype, device=self.device)
             assert model_input.output_future is not None
             def cb():
-                print(f'👹recv logits: shape={logits_buf.shape}. let\'s go continue')
+                # print(f'👹recv logits: shape={logits_buf.shape}. let\'s go continue')
                 output: SamplerOutput = self.model.sample(
                     logits=logits_buf,
                     sampling_metadata=model_input.sampling_metadata,
@@ -1401,7 +1402,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                                            model_input.sampling_metadata)
         
         if model_input.drank is not None:
-            print(f'👹send logits: shape={logits.shape}')
+            # print(f'👹send logits: shape={logits.shape}')
             get_kvcc().isend(logits, dst=model_input.drank)
 
         if not self.is_driver_worker:

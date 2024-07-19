@@ -680,6 +680,8 @@ class Scheduler:
 
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
         while self._passed_delay(time.time()) and waiting_queue:
+            if seq_groups and seq_groups[0].sampling_params.dendpoint:
+                break
             seq_group = waiting_queue[0]
 
             waiting_seqs = seq_group.get_seqs(status=SequenceStatus.WAITING)
@@ -826,7 +828,7 @@ class Scheduler:
                 s.seq_group.sampling_params.dendpoint is not None \
                     for s in prefills.seq_groups):
             assert len(prefills.seq_groups) == 1
-            print('🎃not put to running, will schedule it later')
+            # print('🎃not put to running, will schedule it later')
         else:
             self.running.extend([s.seq_group for s in prefills.seq_groups])
         self.running.extend(

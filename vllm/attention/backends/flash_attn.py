@@ -291,7 +291,7 @@ class FlashAttentionImpl(AttentionImpl):
 
         if attn_metadata.drank is not None:
             kvcc = get_kvcc()
-            print(f'👹isend: kv shape={key.shape}')
+            # print(f'👹isend: kv shape={key.shape}')
             kvcc.isend(key.contiguous(), attn_metadata.drank)
             kvcc.isend(value.contiguous(), attn_metadata.drank)
 
