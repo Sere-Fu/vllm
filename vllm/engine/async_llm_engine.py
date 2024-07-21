@@ -496,7 +496,7 @@ class AsyncLLMEngine:
         if request_outputs:
             if request_outputs[0].finished:
                 now = time.perf_counter()
-                print(f"batch decode {len(request_outputs)} finished takes {now-self.pre_batch_finished} s at {now}:", file=sys.stderr)
+                print(f"batch decode {len(request_outputs)} finished takes {now-self.pre_batch_finished} s at {now}, waiting {len(self.engine.scheduler.with_kv)} :", file=sys.stderr)
                 self.pre_batch_finished = now
 
         # Put the outputs into the corresponding streams.
