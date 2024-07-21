@@ -145,6 +145,7 @@ async def decode(ws: WebSocket):
                 print(f"prove {len(seq_groups)} requests")
                 await ws.send_text("yes")
             else:
+                is_query = True
                 print(f"reject {len(seq_groups)} requests")
                 await ws.send_text("no")
 
