@@ -845,6 +845,7 @@ def init_distributed_environment(
 
 import torch.distributed as dist
 from collections import deque
+import time
 class KVCacheCoordinator:
     MAX_WIP = 400
 
@@ -852,6 +853,7 @@ class KVCacheCoordinator:
         self.pending = deque()
         self.wip = deque()
         self.p2p_group = dist.new_group(list(range(dist.get_world_size())))
+        self.last_time = time.perf_counter()
 
     def _invoke(self, buf, op, cb):
         assert len(self.pending) < KVCacheCoordinator.MAX_WIP * 4, "Too many pending IO OPs"
@@ -861,29 +863,34 @@ class KVCacheCoordinator:
             self.pending.append((buf, op, cb))
 
     def isend(self, buf, dst, cb=None):
-        self._invoke(buf, lambda: dist.isend(buf, dst=dst), cb)
+        self._invoke(buf, lambda: dist.isend(buf, dst=dst, group=self.p2p_group), cb)
 
     def irecv(self, buf, src, cb=None):
-        self._invoke(buf, lambda: dist.irecv(buf, src=src), cb)
+        self._invoke(buf, lambda: dist.irecv(buf, src=src, group=self.p2p_group), cb)
 
     def complete_io_and_dispatch_pending(self):
         nwip = len(self.wip)
+        nbytes = 0
+        elapsed = time.perf_counter() - self.last_time
+        self.last_time = time.perf_counter()
         while self.wip:
             buf, h, cb = self.wip[0]
+            nbytes += buf.numel() * buf.element_size()
             if h.is_completed():
                 if cb is not None:
                     cb()
                 self.wip.popleft()
             else:
                 break
-        if nwip != len(self.wip):
-            print(f'👾completed={nwip-len(self.wip)}, wip={len(self.wip)}, pending={len(self.pending)}')
         while self.pending:
             if len(self.wip) < KVCacheCoordinator.MAX_WIP:
                 buf, op, cb = self.pending.popleft()
                 self.wip.append((buf, op(), cb))
             else:
                 break
+        if nwip != len(self.wip):
+            print(f'👾completed={nwip-len(self.wip)}, wip={len(self.wip)}, pending={len(self.pending)}, '
+                  f'bandwidth={nbytes/elapsed/1024**3:.3f}GB/s')
 
 _KVCC = None
 
