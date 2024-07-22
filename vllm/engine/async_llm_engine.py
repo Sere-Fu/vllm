@@ -257,30 +257,6 @@ class _AsyncLLMEngine(LLMEngine):
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
                 return self._process_model_outputs(output, scheduler_outputs)
 
-    async def decode_worker_ready_to_receive(self, seq_groups: List[SequenceGroup]) -> None:
-        pload = {
-            "encoded_seq_groups": marshalToB64String(seq_groups),
-        }
-
-        timeout = aiohttp.ClientTimeout(total=3 * 3600)
-
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            while True:
-                async with session.post("http://127.0.0.1:8001/ready_to_receive",
-                                        headers={"User-Agent": "p-worker"},
-                                        json=pload) as response:
-                    chunks = []
-                    async for chunk, _ in response.content.iter_chunks():
-                        chunks.append(chunk)
-                output = b"".join(chunks).decode("utf-8")
-                output = json.loads(output)
-
-                # Re-send the request if it failed.
-                if "error" not in output:
-                    break
-
-        return output['output']
-
     async def encode_request_async(
         self,
         request_id: str,  # pylint: disable=unused-argument

@@ -90,9 +90,7 @@ async def decode(ws: WebSocket):
 
     _engine = engine.engine
     scheduler = _engine.scheduler
-    block_size = scheduler.block_manager.block_size
     request_tracker = engine._request_tracker
-    gpu_cache = _engine.driver_worker.gpu_cache
     cpu_cache = _engine.driver_worker.cpu_cache
     cache_engine = _engine.driver_worker.cache_engine
     num_layers = _engine.model_config.get_num_layers(_engine.parallel_config)
