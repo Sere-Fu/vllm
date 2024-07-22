@@ -1,5 +1,6 @@
 import argparse
 import json
+import asyncio
 import sys
 import time
 import pickle
@@ -148,46 +149,51 @@ async def decode(ws: WebSocket):
                 await ws.send_text("no")
 
         elif packet_type ==  PacketType.KV_CACHE:
-            if ith % 16 == 0:
-                s = time.perf_counter()
-                for event in cache_engine.events[checked_events:]:
-                    if event.query():
-                        checked_events += 1
+            # if ith % 16 == 0:
+            #     s = time.perf_counter()
+            #     for event in cache_engine.events[checked_events:]:
+            #         if event.query():
+            #             checked_events += 1
 
-                if checked_events == num_layers:
-                    if scheduler.without_kv:
-                        scheduler.with_kv.extend(scheduler.without_kv.pop(0))
-                        request_tracker.new_requests_event.set()
-                    checked_events == 0
+            #     if checked_events == num_layers:
+            #         if scheduler.without_kv:
+            #             scheduler.with_kv.extend(scheduler.without_kv.pop(0))
+            #             request_tracker.new_requests_event.set()
+            #         checked_events == 0
 
-                print(f"check takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
+            #     print(f"check takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
-            kv_cpu = torch.frombuffer(packet, dtype=torch.float16)
+            # kv_cpu = torch.frombuffer(packet, dtype=torch.float16)
 
-            if is_k:
-                kv_cpu_reshape = kv_cpu.reshape(-1, 8, 16, 16, 8)
-                if ith == 0:
-                    bs = kv_cpu_reshape.shape[0]
-                    src_to_dst = {i: current_block_tables[i] for i in range(bs)}
-                cpu_cache[ith][0][:bs].copy_(kv_cpu_reshape)
-                is_k = False
-            else:
-                kv_cpu_reshape = kv_cpu.reshape(-1, 8, 128, 16)
-                bs = kv_cpu_reshape.shape[0]
-                cpu_cache[ith][1][:bs].copy_(kv_cpu_reshape)
+            # if is_k:
+            #     kv_cpu_reshape = kv_cpu.reshape(-1, 8, 16, 16, 8)
+            #     if ith == 0:
+            #         bs = kv_cpu_reshape.shape[0]
+            #         src_to_dst = {i: current_block_tables[i] for i in range(bs)}
+            #     await asyncio.sleep(0)
+            #     cpu_cache[ith][0][:bs].copy_(kv_cpu_reshape)
+            #     is_k = False
+            # else:
+            #     kv_cpu_reshape = kv_cpu.reshape(-1, 8, 128, 16)
+            #     bs = kv_cpu_reshape.shape[0]
+            #     cpu_cache[ith][1][:bs].copy_(kv_cpu_reshape)
 
-                s = time.perf_counter()
-                cache_engine.swap_in_layerwise(ith, src_to_dst)
-                print(f"swap in {ith} takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
+            #     s = time.perf_counter()
+            #     await asyncio.sleep(0)
+            #     cache_engine.swap_in_layerwise(ith, src_to_dst)
+            #     print(f"swap in {ith} takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
-                is_k = True
-                ith += 1
+            #     is_k = True
+            #     ith += 1
+            pass
 
         elif packet_type ==  PacketType.DECODE:
             s = time.perf_counter()
             seq_groups = pickle.loads(packet)
             print(f"received {len(seq_groups)} requests")
             scheduler.without_kv.append(seq_groups)
+            scheduler.with_kv.extend(scheduler.without_kv.pop(0))
+            request_tracker.new_requests_event.set()
             print(f"niubi takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
         print(f"process {packet_type} takes: {1000 * (time.perf_counter() - start)} ms", file=sys.stderr)
