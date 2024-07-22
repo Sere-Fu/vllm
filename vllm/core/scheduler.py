@@ -673,14 +673,15 @@ class Scheduler:
             SchedulerSwappedInOutputs.
         """
         ignored_seq_groups: List[SequenceGroup] = []
-        seq_groups: List[SequenceGroup] = []
+        seq_groups: List[ScheduledSequenceGroup] = []
         # We don't sort waiting queue because we assume it is sorted.
         # Copy the queue so that the input queue is not modified.
         waiting_queue = deque([s for s in waiting_queue])
 
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
         while self._passed_delay(time.time()) and waiting_queue:
-            if seq_groups and seq_groups[0].sampling_params.dendpoint:
+            if seq_groups and (seq_groups[0].seq_group.sampling_params.dendpoint or\
+                seq_groups[0].seq_group.sampling_params.prank is not None):
                 break
             seq_group = waiting_queue[0]
 

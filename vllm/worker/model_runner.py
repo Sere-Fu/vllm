@@ -1404,6 +1404,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         if model_input.drank is not None:
             # print(f'👹send logits: shape={logits.shape}')
             get_kvcc().isend(logits, dst=model_input.drank)
+            return []
 
         if not self.is_driver_worker:
             return []

@@ -231,6 +231,7 @@ class _AsyncLLMEngine(LLMEngine):
 
         if not scheduler_outputs.is_empty():
             output_future = None
+            is_split_P = False
             # Execute the model.
             if any(ssg.seq_group.sampling_params.dendpoint or ssg.seq_group.sampling_params.prank is not None\
                     for ssg in scheduler_outputs.scheduled_seq_groups):
@@ -239,6 +240,7 @@ class _AsyncLLMEngine(LLMEngine):
                 if meta.is_prompt:
                     assert len(scheduler_outputs.scheduled_seq_groups) == 1
                     if seq_group.sampling_params.dendpoint: #P
+                        is_split_P = True
                         import torch.distributed as dist
                         import aiohttp
                         async def notify_dendpoint():
@@ -284,7 +286,13 @@ class _AsyncLLMEngine(LLMEngine):
                 output_future=output_future)
             output = await self.model_executor.execute_model_async(
                 execute_model_req)
-            if not output: return []
+            if not output:
+                if is_split_P: # ad hoc: seqs is freed in _process_model_outputs
+                    for sg in scheduler_outputs.scheduled_seq_groups:
+                        for s in sg.seq_group.seqs_dict.values():
+                            for scheduler in self.scheduler:
+                                scheduler.free_seq(s)
+                return []
         else:
             output = []
 
