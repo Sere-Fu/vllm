@@ -213,9 +213,7 @@ class _AsyncLLMEngine(LLMEngine):
 
         if get_engine_type() == EngineType.PREFILL:
             while True:
-                packet = form_packet(PacketType.QUERY, scheduler_outputs.scheduled_seq_groups)
-                self.to_t.put_nowait((True, packet))
-                ret = await self.from_t.get()
+                ret = await self.query_remote(scheduler_outputs.scheduled_seq_groups)
                 if ret == 'yes':
                     break
                 else:
@@ -250,12 +248,52 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             res = self._process_model_outputs(output, scheduler_outputs)
             # await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
-            packet = form_packet(PacketType.DECODE, scheduler_outputs.scheduled_seq_groups)
-            self.to_t.put_nowait((False, packet))
+            # packet = form_packet(PacketType.DECODE, scheduler_outputs.scheduled_seq_groups)
+            # self.to_t.put_nowait((False, packet))
+            await self.decode_remote(scheduler_outputs.scheduled_seq_groups)
             return res
         else:
             with perf_execution("_AsyncLLMEngine.step_async._process_model_outputs".rjust(60, ' ')):
                 return self._process_model_outputs(output, scheduler_outputs)
+
+    async def query_remote(self, seq_groups):
+        pload = {
+            "encoded_seq_groups": marshalToB64String(seq_groups),
+        }
+        timeout = aiohttp.ClientTimeout(total=3 * 3600)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                async with session.post("tcp://127.0.0.1:8001/query",
+                                        json=pload) as response:
+                    chunks = []
+                    async for chunk, _ in response.content.iter_chunks():
+                        chunks.append(chunk)
+                output = b"".join(chunks).decode("utf-8")
+                output = json.loads(output)
+
+                # Re-send the request if it failed.
+                if "error" not in output:
+                    break
+            return output['output']
+
+    async def decode_remote(self, seq_groups):
+        pload = {
+            "encoded_seq_groups": marshalToB64String(seq_groups),
+        }
+        timeout = aiohttp.ClientTimeout(total=3 * 3600)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                async with session.post("tcp://127.0.0.1:8001/decode",
+                                        json=pload) as response:
+                    chunks = []
+                    async for chunk, _ in response.content.iter_chunks():
+                        chunks.append(chunk)
+                output = b"".join(chunks).decode("utf-8")
+                output = json.loads(output)
+
+                # Re-send the request if it failed.
+                if "error" not in output:
+                    break
 
     async def encode_request_async(
         self,
@@ -402,8 +440,6 @@ class AsyncLLMEngine:
         if get_engine_type() == EngineType.PREFILL:
             self._background_loop_unshielded = asyncio.get_event_loop(
                 ).create_task(self.run_engine_loop_prefill())
-            self._websocket_to_decode_worker_unshielded = asyncio.get_event_loop(
-                ).create_task(self.open_websocket_to_decode_worker())
         elif get_engine_type() == EngineType.DECODING:
             self._background_loop_unshielded = asyncio.get_event_loop(
                 ).create_task(self.run_engine_loop_decode())
@@ -415,11 +451,11 @@ class AsyncLLMEngine:
                     request_tracker=self._request_tracker))
         self.background_loop = asyncio.shield(self._background_loop_unshielded)
 
-        if get_engine_type() == EngineType.PREFILL:
-            self._websocket_to_decode_worker_unshielded.add_done_callback(
-                partial(_raise_exception_on_finish,
-                        request_tracker=self._request_tracker))
-            self.websocket_to_decode_worker = asyncio.shield(self._websocket_to_decode_worker_unshielded)
+        # if get_engine_type() == EngineType.PREFILL:
+        #     self._websocket_to_decode_worker_unshielded.add_done_callback(
+        #         partial(_raise_exception_on_finish,
+        #                 request_tracker=self._request_tracker))
+        #     self.websocket_to_decode_worker = asyncio.shield(self._websocket_to_decode_worker_unshielded)
 
     def _init_engine(self, *args,
                      **kwargs) -> Union[_AsyncLLMEngine, "ray.ObjectRef"]:
@@ -493,15 +529,15 @@ class AsyncLLMEngine:
         else:
             self.engine.abort_request(request_ids)
 
-    async def open_websocket_to_decode_worker(self):
-        timeout = aiohttp.ClientTimeout(total=3 * 3600)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.ws_connect("http://127.0.0.1:8001/decode") as ws:
-                while True:
-                    expect_return, data = await self.engine.to_t.get()
-                    await ws.send_bytes(data)
-                    if expect_return:
-                        self.engine.from_t.put_nowait(await ws.receive_str())
+    # async def open_websocket_to_decode_worker(self):
+    #     timeout = aiohttp.ClientTimeout(total=3 * 3600)
+    #     async with aiohttp.ClientSession(timeout=timeout) as session:
+    #         async with session.ws_connect("http://127.0.0.1:8001/decode") as ws:
+    #             while True:
+    #                 expect_return, data = await self.engine.to_t.get()
+    #                 await ws.send_bytes(data)
+    #                 if expect_return:
+    #                     self.engine.from_t.put_nowait(await ws.receive_str())
 
     async def run_engine_loop_prefill(self):
         # Initialize the RequestTracker here so it uses the right event loop.

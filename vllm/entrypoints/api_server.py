@@ -16,7 +16,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
-from vllm.utils import PacketType, get_packet_type, RecvKVCacheCoordinator
+from vllm.utils import PacketType, get_packet_type, RecvKVCacheCoordinator, unmarshalFromB64String
 from vllm.sequence import SequenceStatus, Sequence
 from vllm.worker.model_runner import _make_tensor_with_pad
 from safetensors.torch import load
@@ -81,128 +81,170 @@ async def generate(request: Request) -> Response:
     ret = {"text": text_outputs}
     return JSONResponse(ret)
 
-@app.websocket("/decode")
-async def decode(ws: WebSocket):
+@app.post("/query")
+async def query(request: Request) -> Response:
     if not engine.is_running:
         engine.start_background_loop()
+    request_dict = await request.json()
+    seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
-    await ws.accept()
-    print("prefill worker connected")
+    scheduler = engine.engine.scheduler
 
-    _engine = engine.engine
-    scheduler = _engine.scheduler
-    request_tracker = engine._request_tracker
-    cpu_cache = _engine.driver_worker.cpu_cache
-    cache_engine = _engine.driver_worker.cache_engine
-    num_layers = _engine.model_config.get_num_layers(_engine.parallel_config)
+    if scheduler.block_manager.can_allocates(seq_groups) == AllocStatus.OK:
+        slot_mapping: List[List[int]] = []
+        max_prompt_len = 0
+        for seq_group in seq_groups:
+            seq: Sequence = seq_group.get_seqs()[0]
+            prompt_len = len(seq.data.get_token_ids())
+            if prompt_len > max_prompt_len:
+                max_prompt_len = prompt_len
+            slot_mapping.append([])
+            for seq in seq_group.get_seqs():
+                seq.status = SequenceStatus.WAITING
+            scheduler._allocate(seq_group)
 
-    current_block_tables = []
-    src_to_dst = {}
+        ret = {"output": "yes"}
+    else:
+        ret = {"output": "no"}
 
-    # r_kvc = RecvKVCacheCoordinator(num_layers, gpu_cache, scheduler.without_kv, scheduler.with_kv, request_tracker)
+    return JSONResponse(ret)
+
+@app.post("/decode")
+async def decode(request: Request) -> Response:
+    request_dict = await request.json()
+    seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
+
+    scheduler = engine.engine.scheduler
+    scheduler.without_kv.append(seq_groups)
+    scheduler.with_kv.extend(scheduler.without_kv.pop(0))
+    engine._request_tracker.new_requests_event.set()
+
+    ret = {"output": "ack"}
+
+    return JSONResponse(ret)
+
+# @app.websocket("/decode")
+# async def decode(ws: WebSocket):
+#     if not engine.is_running:
+#         engine.start_background_loop()
+
+#     await ws.accept()
+#     print("prefill worker connected")
+
+#     _engine = engine.engine
+#     scheduler = _engine.scheduler
+#     request_tracker = engine._request_tracker
+#     cpu_cache = _engine.driver_worker.cpu_cache
+#     cache_engine = _engine.driver_worker.cache_engine
+#     num_layers = _engine.model_config.get_num_layers(_engine.parallel_config)
+
+#     current_block_tables = []
+#     src_to_dst = {}
+
+#     # r_kvc = RecvKVCacheCoordinator(num_layers, gpu_cache, scheduler.without_kv, scheduler.with_kv, request_tracker)
 
 
 
-    # batch_frames = num_layers * 2 + 1
-    is_query = True
-    ith = 0
-    checked_events = 0
+#     # batch_frames = num_layers * 2 + 1
+#     is_query = True
+#     ith = 0
+#     checked_events = 0
 
-    is_k = True
-    while True:
-        ith %= num_layers
-        packet = await ws.receive_bytes()
-        start = time.perf_counter()
-        if len(packet) > 1000000:
-            packet_type = PacketType.KV_CACHE
-        else:
-            if is_query:
-                packet_type = PacketType.QUERY
-                is_query = False
-            else:
-                packet_type = PacketType.DECODE
-                is_query = True
+#     is_k = True
+#     while True:
+#         ith %= num_layers
+#         packet = await ws.receive_bytes()
+#         start = time.perf_counter()
+#         if len(packet) > 1000000:
+#             packet_type = PacketType.KV_CACHE
+#         else:
+#             if is_query:
+#                 packet_type = PacketType.QUERY
+#                 is_query = False
+#             else:
+#                 packet_type = PacketType.DECODE
+#                 is_query = True
 
-        if packet_type ==  PacketType.QUERY:
-            seq_groups = pickle.loads(packet)
-            for ith in range(16):
-                await asyncio.sleep(0)
-                cache_engine.swap_in_layerwise(ith, src_to_dst)
+#         if packet_type ==  PacketType.QUERY:
+#             seq_groups = pickle.loads(packet)
+#             for ith in range(16):
+#                 await asyncio.sleep(0)
+#                 cache_engine.swap_in_layerwise(ith, src_to_dst)
 
-            if scheduler.block_manager.can_allocates(seq_groups) == AllocStatus.OK:
-                slot_mapping: List[List[int]] = []
-                max_prompt_len = 0
-                for seq_group in seq_groups:
-                    seq: Sequence = seq_group.get_seqs()[0]
-                    prompt_len = len(seq.data.get_token_ids())
-                    if prompt_len > max_prompt_len:
-                        max_prompt_len = prompt_len
-                    slot_mapping.append([])
-                    for seq in seq_group.get_seqs():
-                        seq.status = SequenceStatus.WAITING
-                    scheduler._allocate(seq_group)
-                    block_table = scheduler.block_manager.get_block_table(seq)
-                    current_block_tables.extend(block_table)
+#             if scheduler.block_manager.can_allocates(seq_groups) == AllocStatus.OK:
+#                 slot_mapping: List[List[int]] = []
+#                 max_prompt_len = 0
+#                 for seq_group in seq_groups:
+#                     seq: Sequence = seq_group.get_seqs()[0]
+#                     prompt_len = len(seq.data.get_token_ids())
+#                     if prompt_len > max_prompt_len:
+#                         max_prompt_len = prompt_len
+#                     slot_mapping.append([])
+#                     for seq in seq_group.get_seqs():
+#                         seq.status = SequenceStatus.WAITING
+#                     scheduler._allocate(seq_group)
+#                     block_table = scheduler.block_manager.get_block_table(seq)
+#                     current_block_tables.extend(block_table)
 
-                print(f"prove {len(seq_groups)} requests")
-                await ws.send_text("yes")
-            else:
-                is_query = True
-                print(f"reject {len(seq_groups)} requests")
-                await ws.send_text("no")
+#                 print(f"prove {len(seq_groups)} requests")
+#                 await ws.send_text("yes")
+#             else:
+#                 is_query = True
+#                 print(f"reject {len(seq_groups)} requests")
+#                 await ws.send_text("no")
 
-        elif packet_type ==  PacketType.KV_CACHE:
-            # if ith % 16 == 0:
-            #     s = time.perf_counter()
-            #     for event in cache_engine.events[checked_events:]:
-            #         if event.query():
-            #             checked_events += 1
+#         elif packet_type ==  PacketType.KV_CACHE:
+#             # if ith % 16 == 0:
+#             #     s = time.perf_counter()
+#             #     for event in cache_engine.events[checked_events:]:
+#             #         if event.query():
+#             #             checked_events += 1
 
-            #     if checked_events == num_layers:
-            #         if scheduler.without_kv:
-            #             scheduler.with_kv.extend(scheduler.without_kv.pop(0))
-            #             request_tracker.new_requests_event.set()
-            #         checked_events == 0
+#             #     if checked_events == num_layers:
+#             #         if scheduler.without_kv:
+#             #             scheduler.with_kv.extend(scheduler.without_kv.pop(0))
+#             #             request_tracker.new_requests_event.set()
+#             #         checked_events == 0
 
-            #     print(f"check takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
+#             #     print(f"check takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
-            # kv_cpu = torch.frombuffer(packet, dtype=torch.float16)
+#             # kv_cpu = torch.frombuffer(packet, dtype=torch.float16)
 
-            # if is_k:
-            #     kv_cpu_reshape = kv_cpu.reshape(-1, 8, 16, 16, 8)
-            #     if ith == 0:
-            #         bs = kv_cpu_reshape.shape[0]
-            #         src_to_dst = {i: current_block_tables[i] for i in range(bs)}
-            #     await asyncio.sleep(0)
-            #     cpu_cache[ith][0][:bs].copy_(kv_cpu_reshape)
-            #     is_k = False
-            # else:
-            #     kv_cpu_reshape = kv_cpu.reshape(-1, 8, 128, 16)
-            #     bs = kv_cpu_reshape.shape[0]
-            #     cpu_cache[ith][1][:bs].copy_(kv_cpu_reshape)
+#             # if is_k:
+#             #     kv_cpu_reshape = kv_cpu.reshape(-1, 8, 16, 16, 8)
+#             #     if ith == 0:
+#             #         bs = kv_cpu_reshape.shape[0]
+#             #         src_to_dst = {i: current_block_tables[i] for i in range(bs)}
+#             #     await asyncio.sleep(0)
+#             #     cpu_cache[ith][0][:bs].copy_(kv_cpu_reshape)
+#             #     is_k = False
+#             # else:
+#             #     kv_cpu_reshape = kv_cpu.reshape(-1, 8, 128, 16)
+#             #     bs = kv_cpu_reshape.shape[0]
+#             #     cpu_cache[ith][1][:bs].copy_(kv_cpu_reshape)
 
-            #     s = time.perf_counter()
-            #     await asyncio.sleep(0)
-            #     cache_engine.swap_in_layerwise(ith, src_to_dst)
-            #     print(f"swap in {ith} takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
+#             #     s = time.perf_counter()
+#             #     await asyncio.sleep(0)
+#             #     cache_engine.swap_in_layerwise(ith, src_to_dst)
+#             #     print(f"swap in {ith} takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
-            #     is_k = True
-            #     ith += 1
-            pass
+#             #     is_k = True
+#             #     ith += 1
+#             pass
 
-        elif packet_type ==  PacketType.DECODE:
-            for ith in range(16, 32):
-                await asyncio.sleep(0)
-                cache_engine.swap_in_layerwise(ith, src_to_dst)
-            s = time.perf_counter()
-            seq_groups = pickle.loads(packet)
-            print(f"received {len(seq_groups)} requests")
-            scheduler.without_kv.append(seq_groups)
-            scheduler.with_kv.extend(scheduler.without_kv.pop(0))
-            request_tracker.new_requests_event.set()
-            print(f"niubi takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
+#         elif packet_type ==  PacketType.DECODE:
+#             for ith in range(16, 32):
+#                 await asyncio.sleep(0)
+#                 cache_engine.swap_in_layerwise(ith, src_to_dst)
+#             s = time.perf_counter()
+#             seq_groups = pickle.loads(packet)
+#             print(f"received {len(seq_groups)} requests")
+#             scheduler.without_kv.append(seq_groups)
+#             scheduler.with_kv.extend(scheduler.without_kv.pop(0))
+#             request_tracker.new_requests_event.set()
+#             print(f"niubi takes: {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
 
-        print(f"process {packet_type} takes: {1000 * (time.perf_counter() - start)} ms", file=sys.stderr)
+#         print(f"process {packet_type} takes: {1000 * (time.perf_counter() - start)} ms", file=sys.stderr)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
