@@ -14,6 +14,7 @@ from vllm.sequence import (ExecuteModelRequest, IntermediateTensors,
 from vllm.utils import (enable_trace_function_call_for_thread, is_hip,
                         update_environment_variables)
 from vllm.worker.model_runner_base import ModelRunnerBase, ModelRunnerInputBase
+from vllm.distributed.parallel_state import get_kvcc
 
 logger = init_logger(__name__)
 
@@ -218,6 +219,11 @@ class LocalOrDistributedWorkerBase(WorkerBase):
     ) -> Optional[List[SamplerOutput]]:
         """Executes at least one model step on the given sequences, unless no
         sequences are provided."""
+        if execute_model_req.run_kvcc_only:
+            with torch.inference_mode():
+                get_kvcc().complete_io_and_dispatch_pending()
+            return
+            
         if self.is_driver_worker:
             if execute_model_req is None:
                 if self.do_metadata_broadcast:

@@ -23,6 +23,7 @@ from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import ExecuteModelRequest, SamplerOutput
 from vllm.usage.usage_lib import UsageContext
+from vllm.distributed.parallel_state import get_kvcc
 
 logger = init_logger(__name__)
 ENGINE_ITERATION_TIMEOUT_S = envs.VLLM_ENGINE_ITERATION_TIMEOUT_S
@@ -294,6 +295,9 @@ class _AsyncLLMEngine(LLMEngine):
                                 scheduler.free_seq(s)
                 return []
         else:
+            if get_kvcc().has_running_io():
+                run_kvcc_req = ExecuteModelRequest(seq_group_metadata_list=None, run_kvcc_only=True)
+                await self.model_executor.execute_model_async(run_kvcc_req)
             output = []
 
         request_outputs = self._process_model_outputs(

@@ -44,6 +44,7 @@ from vllm.usage.usage_lib import (UsageContext, is_usage_stats_enabled,
                                   usage_message)
 from vllm.utils import Counter
 from vllm.version import __version__ as VLLM_VERSION
+from vllm.distributed.parallel_state import get_kvcc
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
@@ -749,7 +750,7 @@ class LLMEngine:
         """
         Returns True if there are unfinished requests for the virtual engine.
         """
-        return self.scheduler[virtual_engine].has_unfinished_seqs()
+        return self.scheduler[virtual_engine].has_unfinished_seqs() or get_kvcc().has_running_io()
 
     def _process_sequence_group_outputs(
         self,

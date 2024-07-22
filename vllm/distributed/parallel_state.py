@@ -850,7 +850,7 @@ class KVCacheCoordinator:
     MAX_WIP = 400
 
     def __init__(self):
-        self.pending = deque()
+        self.pending = deque() # Pending caused by too many running IOs
         self.wip = deque()
         self.p2p_group = dist.new_group(list(range(dist.get_world_size())))
         self.last_time = time.perf_counter()
@@ -875,8 +875,8 @@ class KVCacheCoordinator:
         self.last_time = time.perf_counter()
         while self.wip:
             buf, h, cb = self.wip[0]
-            nbytes += buf.numel() * buf.element_size()
             if h.is_completed():
+                nbytes += buf.numel() * buf.element_size()
                 if cb is not None:
                     cb()
                 self.wip.popleft()
@@ -890,7 +890,10 @@ class KVCacheCoordinator:
                 break
         if nwip != len(self.wip):
             print(f'👾completed={nwip-len(self.wip)}, wip={len(self.wip)}, pending={len(self.pending)}, '
-                  f'bandwidth={nbytes/elapsed/1024**3:.3f}GB/s')
+                  f'bandwidth={nbytes/elapsed/1024**3:.3f}GB/s, interval={elapsed*1000:.3f}ms')
+    
+    def has_running_io(self):
+        return len(self.wip) > 0 or len(self.pending) > 0
 
 _KVCC = None
 
