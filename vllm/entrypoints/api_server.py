@@ -125,6 +125,9 @@ async def decode(ws: WebSocket):
 
         if packet_type ==  PacketType.QUERY:
             seq_groups = pickle.loads(packet)
+            for ith in range(16):
+                await asyncio.sleep(0)
+                cache_engine.swap_in_layerwise(ith, src_to_dst)
 
             if scheduler.block_manager.can_allocates(seq_groups) == AllocStatus.OK:
                 slot_mapping: List[List[int]] = []
@@ -188,6 +191,9 @@ async def decode(ws: WebSocket):
             pass
 
         elif packet_type ==  PacketType.DECODE:
+            for ith in range(16, 32):
+                await asyncio.sleep(0)
+                cache_engine.swap_in_layerwise(ith, src_to_dst)
             s = time.perf_counter()
             seq_groups = pickle.loads(packet)
             print(f"received {len(seq_groups)} requests")
