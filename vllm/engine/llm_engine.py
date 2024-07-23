@@ -159,11 +159,18 @@ class LLMEngine:
             raise ValueError(f"Invalid engine_type: {engine_type}")
 
     def _init_messager(self):
+        num_layers = self.model_config.get_num_layers(self.parallel_config)
         result_handler = ResultHandler()
         if get_engine_type() == EngineType.PREFILL:
-            self.messager = MessagerWrapper(role='pusher', result_handler=result_handler)
+            self.messager = MessagerWrapper(
+                role='pusher',
+                num_layers=num_layers,
+                result_handler=result_handler)
         elif get_engine_type() == EngineType.DECODING:
-            self.messager = MessagerWrapper(role='puller', result_handler=result_handler)
+            self.messager = MessagerWrapper(
+                role='puller',
+                num_layers=num_layers,
+                result_handler=result_handler)
         else:
             raise ValueError("Invalid engine_type")
 

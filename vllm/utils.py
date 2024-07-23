@@ -368,7 +368,9 @@ class SendKVCacheCoordinator:
                 )
             else:
                 self.wip = self.wip[i:]
+                print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
                 return
+        print(f"wip {0}, completed {len(self.wip)}", file=sys.stderr)
         self.wip.clear()
 
 class RecvKVCacheCoordinator:

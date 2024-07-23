@@ -117,7 +117,6 @@ class PagedAttention(nn.Module):
                 input_metadata.s_kvc.check()
 
                 num_slots = key.shape[0]
-                print(f"kangsan debug {key.shape}", file=sys.stderr)
                 key_buffer = input_metadata.kv_buffers[ith][0]
                 value_buffer = input_metadata.kv_buffers[ith][1]
                 key_buffer[:num_slots].copy_(key, non_blocking=True)

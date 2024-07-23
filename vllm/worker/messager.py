@@ -1,7 +1,9 @@
 from typing import List, Tuple
 import zmq
 import pickle
+import sys
 import torch
+import time
 from multiprocessing import Queue
 
 # from vllm.worker.cache_engine import KVCache
@@ -30,8 +32,13 @@ class KVPusher:
         logger.info(f"end sending {ith}th layer kv")
 
     def send_kv_whole(self, num_slots, ith: int):
-        self.sock.send(pickle.dumps(self.kv_buffer[ith][0][:num_slots], protocol=pickle.HIGHEST_PROTOCOL), copy=False)
-        self.sock.send(pickle.dumps(self.kv_buffer[ith][1][:num_slots], protocol=pickle.HIGHEST_PROTOCOL), copy=False)
+        m0 = time.perf_counter()
+        self.sock.send(self.kv_buffer[ith][0][:num_slots].numpy(), copy=False)
+        self.sock.send(self.kv_buffer[ith][1][:num_slots].numpy(), copy=False)
+
+        m1 = time.perf_counter()
+        print(f"send takes {1000 * (m1-m0)} ms", file=sys.stderr)
+        logger.info(f"end sending {ith}th layer kv")
 
     def warmup(self):
         pass
@@ -58,25 +65,12 @@ class KVPuller:
             logger.info(f"end receiving {ith}th layer kv")
         self.result_queue.put("done")
 
-    def receive_kv_whole(self):
-        # logger.info(f"start receiving kv as a whole")
-        for ith in range(self.num_layers):
-            pickle.loads(self.sock.recv(copy=False))
-            pickle.loads(self.sock.recv(copy=False))
-
-            # num_slots = k.shape[0]
-            # self.kv_buffer[ith][0][:num_slots].copy_(k)
-            # self.kv_buffer[ith][1][:num_slots].copy_(v)
-            # self.gpu_cache[ith][0][:num_slots].copy_
-
-        logger.info(f"end receiving kv cache")
-
     def receive_kv_forever(self):
         # logger.info(f"start receiving kv as a whole")
         ith = 0
         while True:
-            pickle.loads(self.sock.recv(copy=False))
-            pickle.loads(self.sock.recv(copy=False))
+            self.sock.recv(copy=False)
+            self.sock.recv(copy=False)
             if ith == self.num_layers-1:
                 ith = 0
                 logger.info(f"end receiving kv cache")
