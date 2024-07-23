@@ -854,10 +854,13 @@ class KVCacheCoordinator:
         self.wip = deque()
         self.p2p_group = dist.new_group(list(range(dist.get_world_size())))
         self.last_time = time.perf_counter()
+        self.n_completed = 0
+        self.n_issue = 0
 
     def _invoke(self, buf, op, cb):
         assert len(self.pending) < KVCacheCoordinator.MAX_WIP * 4, "Too many pending IO OPs"
         if len(self.wip) < KVCacheCoordinator.MAX_WIP:
+            self.n_issue += 1
             self.wip.append((buf, op(), cb))
         else:
             self.pending.append((buf, op, cb))
@@ -876,6 +879,7 @@ class KVCacheCoordinator:
         while self.wip:
             buf, h, cb = self.wip[0]
             if h.is_completed():
+                self.n_completed += 1
                 nbytes += buf.numel() * buf.element_size()
                 if cb is not None:
                     cb()
@@ -885,12 +889,14 @@ class KVCacheCoordinator:
         while self.pending:
             if len(self.wip) < KVCacheCoordinator.MAX_WIP:
                 buf, op, cb = self.pending.popleft()
+                self.n_issue += 1
                 self.wip.append((buf, op(), cb))
             else:
                 break
         if nwip != len(self.wip):
             print(f'👾completed={nwip-len(self.wip)}, wip={len(self.wip)}, pending={len(self.pending)}, '
-                  f'bandwidth={nbytes/elapsed/1024**3:.3f}GB/s, interval={elapsed*1000:.3f}ms')
+                  f'interval={elapsed*1000:.3f}ms, bandwidth={nbytes/elapsed/1024**3:.3f}GB/s, '
+                  f'accumaleted_issue={self.n_issue}, accumaleted_complete={self.n_completed}')
     
     def has_running_io(self):
         return len(self.wip) > 0 or len(self.pending) > 0
