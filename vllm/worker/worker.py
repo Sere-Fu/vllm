@@ -229,8 +229,6 @@ class Worker:
     def prefill(
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None,
-        to_rank: Optional[int] = None,
-        s_kvc: SendKVCacheCoordinator = None
     ) -> Optional[SamplerOutput]:
         if self.is_driver_worker:
             assert seq_group_metadata_list is not None
@@ -249,9 +247,7 @@ class Worker:
 
         output = self.model_runner.prefill(seq_group_metadata_list,
                                                 self.gpu_cache,
-                                                self.kv_buffer,
-                                                to_rank,
-                                                s_kvc)
+                                                self.kv_buffer)
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:

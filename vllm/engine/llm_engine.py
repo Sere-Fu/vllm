@@ -21,6 +21,8 @@ from vllm.sequence import (SamplerOutput, Sequence, SequenceGroup,
 from vllm.transformers_utils.tokenizer import (detokenize_incrementally,
                                                TokenizerGroup)
 from vllm.utils import Counter, set_cuda_visible_devices, get_ip, get_open_port, get_distributed_init_method
+from vllm.executor.multiproc_worker_utils import (MessagerWrapper,
+                                                  ResultHandler, WorkerMonitor)
 
 if ray:
     from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
@@ -132,6 +134,7 @@ class LLMEngine:
 
         # Profile the memory usage and initialize the cache.
         self._init_cache()
+        self._init_messager()
 
         # Create the scheduler.
         self.scheduler = Scheduler(scheduler_config, cache_config, lora_config)
@@ -154,6 +157,18 @@ class LLMEngine:
             _ENGINE_TYPE = EngineType.MIXED
         else:
             raise ValueError(f"Invalid engine_type: {engine_type}")
+
+    def _init_messager(self):
+        result_handler = ResultHandler()
+        if get_engine_type() == EngineType.PREFILL:
+            self.messager = MessagerWrapper(role='pusher', result_handler=result_handler)
+        elif get_engine_type() == EngineType.DECODING:
+            self.messager = MessagerWrapper(role='puller', result_handler=result_handler)
+        else:
+            raise ValueError("Invalid engine_type")
+
+        self.messager.pass_cache(self.driver_worker.gpu_cache,
+                                 self.driver_worker.cpu_cache)
 
     def _init_workers(self):
         # Lazy import the Worker to avoid importing torch.cuda/xformers

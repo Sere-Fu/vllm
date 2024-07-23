@@ -16,7 +16,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
-from vllm.utils import PacketType, get_packet_type, RecvKVCacheCoordinator, unmarshalFromB64String
+from vllm.utils import marshalToB64String, unmarshalFromB64String
 from vllm.sequence import SequenceStatus, Sequence
 from vllm.worker.model_runner import _make_tensor_with_pad
 from safetensors.torch import load
@@ -90,22 +90,19 @@ async def query(request: Request) -> Response:
 
     scheduler = engine.engine.scheduler
 
+    bts = []
     if scheduler.block_manager.can_allocates(seq_groups) == AllocStatus.OK:
-        slot_mapping: List[List[int]] = []
-        max_prompt_len = 0
         for seq_group in seq_groups:
-            seq: Sequence = seq_group.get_seqs()[0]
-            prompt_len = len(seq.data.get_token_ids())
-            if prompt_len > max_prompt_len:
-                max_prompt_len = prompt_len
-            slot_mapping.append([])
-            for seq in seq_group.get_seqs():
-                seq.status = SequenceStatus.WAITING
+            block_tables: Dict[int, List[int]] = {}
+            seq = seq_group.get_seqs()[0]
+            seq.status = SequenceStatus.WAITING
             scheduler._allocate(seq_group)
+            block_tables[seq.seq_id] = scheduler.block_manager.get_block_table(seq)
+            bts.append(block_tables)
 
-        ret = {"output": "yes"}
+        ret = {"decision": "yes", "encoded_bts": marshalToB64String(bts)}
     else:
-        ret = {"output": "no"}
+        ret = {"decision": "no"}
 
     return JSONResponse(ret)
 

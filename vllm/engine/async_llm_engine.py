@@ -18,8 +18,7 @@ from vllm.engine.ray_utils import initialize_cluster, ray
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
-from vllm.sequence import SequenceGroupMetadata, SequenceGroup
-from vllm.utils import marshalToB64String, form_packet, PacketType, perf_execution, SendKVCacheCoordinator
+from vllm.utils import marshalToB64String, unmarshalFromB64String, perf_execution, SendKVCacheCoordinator
 
 logger = init_logger(__name__)
 
@@ -182,10 +181,6 @@ class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.transfer_thread = ThreadPoolExecutor(max_workers=1)
-        self.to_t = None
-        self.from_t = None
-        self.s_kvc = None
         self.wrapper = wrapper
 
     async def step_async(self) -> List[RequestOutput]:
@@ -199,10 +194,6 @@ class _AsyncLLMEngine(LLMEngine):
         the sequences and returns the newly generated results.
         """
         if get_engine_type() == EngineType.PREFILL:
-            if not self.s_kvc:
-                self.to_t = asyncio.Queue()
-                self.from_t = asyncio.Queue()
-                self.s_kvc = SendKVCacheCoordinator(self.to_t)
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("prefill")
         elif get_engine_type() == EngineType.DECODING:
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
@@ -214,10 +205,14 @@ class _AsyncLLMEngine(LLMEngine):
         if get_engine_type() == EngineType.PREFILL:
             while True:
                 ret = await self.query_remote(scheduler_outputs.scheduled_seq_groups)
-                if ret == 'yes':
-                    break
-                else:
+                if ret == 'no':
                     await asyncio.sleep(1)
+                else:
+                    bts = ret
+                    for seq_group_metadata in seq_group_metadata_list:
+                        seq_group_metadata.block_tables = bts.pop(0)
+                    break
+
 
         if not scheduler_outputs.is_empty():
             # Execute the model.
@@ -226,8 +221,6 @@ class _AsyncLLMEngine(LLMEngine):
                     "prefill",
                     driver_kwargs={
                         "seq_group_metadata_list": seq_group_metadata_list,
-                        "to_rank": 1,
-                        "s_kvc": self.s_kvc
                     })
             else:
                 print(f"scheduled decode {len(seq_group_metadata_list)}:", time.perf_counter(), file=sys.stderr)
@@ -274,7 +267,10 @@ class _AsyncLLMEngine(LLMEngine):
                 # Re-send the request if it failed.
                 if "error" not in output:
                     break
-            return output['output']
+            if output['decision'] == "yes":
+                return unmarshalFromB64String(output['encoded_bts'])
+            else:
+                return output['decision']
 
     async def decode_remote(self, seq_groups):
         pload = {

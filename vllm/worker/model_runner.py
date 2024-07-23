@@ -186,8 +186,7 @@ class ModelRunner:
                     slot_mapping[-1].append(_PAD_SLOT_ID)
                     continue
 
-                # block_number = block_table[i // self.block_size]
-                block_number = 0
+                block_number = block_table[i // self.block_size]
                 block_offset = i % self.block_size
                 slot = block_number * self.block_size + block_offset
                 slot_mapping[-1].append(slot)
@@ -455,7 +454,6 @@ class ModelRunner:
     def prepare_input_tensors(
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
-        to_rank: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, InputMetadata, SamplingMetadata,
                Set[int], LoRAMapping]:
         if self.is_driver_worker:
@@ -535,18 +533,6 @@ class ModelRunner:
                 perform_sampling=False,
             )
 
-        if to_rank != -1:
-            # input_metadata.to_send = coalesce_blocks([block
-            #                                           for seq_group_metadata in seq_group_metadata_list
-            #                                           for blocks in seq_group_metadata.block_tables.values()
-            #                                           for block in blocks])
-            input_metadata.to_rank = to_rank
-            input_metadata.transfer_stream = self.transfer_stream
-
-        else:
-            # input_metadata.to_send = []
-            input_metadata.to_rank = -1
-
         return (input_tokens, input_positions, input_metadata,
                 sampling_metadata, lora_requests, lora_mapping)
 
@@ -559,7 +545,7 @@ class ModelRunner:
         # with perf_execution("ModelRunner.execute_model.prepare_input_tensors".rjust(60, ' ')):
         (input_tokens, input_positions, input_metadata, sampling_metadata,
         lora_requests,
-        lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, -1)
+        lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list)
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)
@@ -593,15 +579,16 @@ class ModelRunner:
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]],
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
         kv_buffers: List[Tuple[torch.Tensor, torch.Tensor]],
-        to_rank: int,
-        s_kvc: SendKVCacheCoordinator,
     ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
          lora_requests,
-         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list, to_rank)
+         lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list)
 
-        input_metadata.s_kvc = s_kvc
         input_metadata.kv_buffers = kv_buffers
+        input_metadata.to_send = coalesce_blocks([block
+                                                    for seq_group_metadata in seq_group_metadata_list
+                                                    for blocks in seq_group_metadata.block_tables.values()
+                                                    for block in blocks])
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)
