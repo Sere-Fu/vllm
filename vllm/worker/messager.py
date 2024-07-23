@@ -71,5 +71,23 @@ class KVPuller:
 
         logger.info(f"end receiving kv cache")
 
+    def receive_kv_forever(self):
+        # logger.info(f"start receiving kv as a whole")
+        ith = 0
+        while True:
+            pickle.loads(self.sock.recv(copy=False))
+            pickle.loads(self.sock.recv(copy=False))
+            if ith == self.num_layers-1:
+                ith = 0
+                logger.info(f"end receiving kv cache")
+                pass
+            ith += 1
+
+            # num_slots = k.shape[0]
+            # self.kv_buffer[ith][0][:num_slots].copy_(k)
+            # self.kv_buffer[ith][1][:num_slots].copy_(v)
+            # self.gpu_cache[ith][0][:num_slots].copy_
+
+
     def warmup(self):
         pass

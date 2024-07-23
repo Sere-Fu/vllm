@@ -78,6 +78,7 @@ async def generate(request: Request) -> Response:
 async def query(request: Request) -> Response:
     if not engine.is_running:
         engine.start_background_loop()
+        engine.engine.messager.execute_method("receive_kv_forever")
     request_dict = await request.json()
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
@@ -98,7 +99,6 @@ async def query(request: Request) -> Response:
         #                         for blocks in block_tables.values()
         #                         for block in blocks ])
         ret = {"decision": "yes", "encoded_bts": marshalToB64String(bts)}
-        engine.engine.messager.execute_method("receive_kv_whole")
     else:
         ret = {"decision": "no"}
 

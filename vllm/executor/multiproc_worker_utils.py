@@ -173,9 +173,9 @@ class MessagerWrapper:
 
     def execute_method(self, method: str, *args, **kwargs):
         try:
-            s = time.perf_counter()
+            # s = time.perf_counter()
             self._task_queue.put((method, args, kwargs))
-            print(f"{method} {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
+            # print(f"{method} {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
         except BaseException as e:
             raise ChildProcessError("worker died") from e
 
