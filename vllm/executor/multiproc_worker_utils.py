@@ -14,7 +14,7 @@ from multiprocessing.process import BaseProcess
 from typing import (Any, Callable, Dict, Generic, List, Optional, TextIO, Tuple,
                     TypeVar, Union)
 
-from vllm.worker.messager import KVPusher, KVPuller
+from vllm.worker.messager import Messager
 from vllm.logger import init_logger
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]
@@ -214,12 +214,8 @@ def _run_worker_process(
     gpu_cache = task_queue.get()
     cpu_cache = task_queue.get()
     kv_buffer = task_queue.get()
-    logger.info("gpu and cpu cache initilized in messager")
     # Initialize worker
-    if role == 'pusher':
-        messager = KVPusher(gpu_cache, cpu_cache, kv_buffer)
-    elif role == 'puller':
-        messager = KVPuller(num_layers, result_queue, gpu_cache, cpu_cache, kv_buffer)
+    messager = Messager(role, "tcp://127.0.0.1:7777", num_layers, result_queue, gpu_cache, cpu_cache, kv_buffer)
 
     # Accept tasks from the engine in task_queue
     # and return task output in result_queue

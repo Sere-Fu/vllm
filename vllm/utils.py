@@ -362,7 +362,7 @@ class SendKVCacheCoordinator:
         for i, ( _, _, num_slots, ith, event) in enumerate(self.wip):
             if event.query():
                 self.messager.execute_method(
-                    "send_kv_whole",
+                    "send_kv",
                     num_slots=num_slots,
                     ith=ith,
                 )
