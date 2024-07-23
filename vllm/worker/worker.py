@@ -1,6 +1,5 @@
 """A GPU worker class."""
 import gc
-import asyncio
 import os
 from typing import Dict, List, Tuple, Set, Optional
 
@@ -19,8 +18,8 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
-from vllm.utils import perf_execution, SendKVCacheCoordinator
-
+from vllm.utils import perf_execution
+from vllm.executor.multiproc_worker_utils import MessagerWrapper
 
 class Worker:
     """A worker class that executes (a partition of) the model on a GPU.
@@ -229,6 +228,7 @@ class Worker:
     def prefill(
         self,
         seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None,
+        messager: MessagerWrapper = None,
     ) -> Optional[SamplerOutput]:
         if self.is_driver_worker:
             assert seq_group_metadata_list is not None
@@ -247,7 +247,8 @@ class Worker:
 
         output = self.model_runner.prefill(seq_group_metadata_list,
                                                 self.gpu_cache,
-                                                self.kv_buffer)
+                                                self.kv_buffer,
+                                                messager)
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:

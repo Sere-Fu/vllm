@@ -1,13 +1,8 @@
 import argparse
 import json
-import asyncio
-import sys
-import time
-import pickle
-import torch
 from typing import AsyncGenerator, Dict, List
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 import uvicorn
 
@@ -16,10 +11,8 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.sampling_params import SamplingParams
 from vllm.utils import random_uuid
-from vllm.utils import marshalToB64String, unmarshalFromB64String
-from vllm.sequence import SequenceStatus, Sequence
-from vllm.worker.model_runner import _make_tensor_with_pad
-from safetensors.torch import load
+from vllm.utils import marshalToB64String, unmarshalFromB64String, coalesce_blocks
+from vllm.sequence import SequenceStatus
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 app = FastAPI()
@@ -100,7 +93,12 @@ async def query(request: Request) -> Response:
             block_tables[seq.seq_id] = scheduler.block_manager.get_block_table(seq)
             bts.append(block_tables)
 
+        to_receive = coalesce_blocks([block
+                                for block_tables in bts
+                                for blocks in block_tables.values()
+                                for block in blocks ])
         ret = {"decision": "yes", "encoded_bts": marshalToB64String(bts)}
+        engine.engine.messager.execute_method("receive_kv", to_receive=to_receive)
     else:
         ret = {"decision": "no"}
 

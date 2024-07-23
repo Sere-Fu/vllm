@@ -221,6 +221,7 @@ class _AsyncLLMEngine(LLMEngine):
                     "prefill",
                     driver_kwargs={
                         "seq_group_metadata_list": seq_group_metadata_list,
+                        "messager": self.messager,
                     })
             else:
                 print(f"scheduled decode {len(seq_group_metadata_list)}:", time.perf_counter(), file=sys.stderr)

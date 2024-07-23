@@ -104,20 +104,13 @@ class PagedAttention(nn.Module):
                 input_metadata.kv_cache_dtype,
             )
 
-        # if hasattr(input_metadata, 'to_rank') and input_metadata.to_rank != -1:
-        #     assert input_metadata.is_prompt
-        #     input_metadata.s_kvc.check()
-
-        #     num_slots = key.shape[0]
-        #     print(f"kangsan debug {key.shape}", file=sys.stderr)
-        #     key_buffer = input_metadata.kv_buffers[ith][0]
-        #     value_buffer = input_metadata.kv_buffers[ith][1]
-        #     key_buffer[:num_slots].copy_(key, non_blocking=True)
-        #     value_buffer[:num_slots].copy_(value, non_blocking=True)
-
-        #     event = torch.cuda.Event()
-        #     event.record()
-        #     input_metadata.s_kvc.submit(key_buffer[:num_slots], value_buffer[:num_slots], ith, event)
+        if hasattr(input_metadata, "should_send_kv") and input_metadata.should_send_kv:
+            assert input_metadata.is_prompt
+            input_metadata.messager.execute_method(
+                "send_kv",
+                ith=ith,
+                to_send=input_metadata.to_send,
+            )
 
         if input_metadata.is_prompt:
             # Prompt run.
