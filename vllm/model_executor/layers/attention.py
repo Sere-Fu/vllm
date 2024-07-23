@@ -95,15 +95,14 @@ class PagedAttention(nn.Module):
         # vectors will not be cached. This happens during the initial memory
         # profiling run.
         if key_cache is not None and value_cache is not None:
-            if not input_metadata.is_prompt:
-                cache_ops.reshape_and_cache(
-                    key,
-                    value,
-                    key_cache,
-                    value_cache,
-                    input_metadata.slot_mapping.flatten(),
-                    input_metadata.kv_cache_dtype,
-                )
+            cache_ops.reshape_and_cache(
+                key,
+                value,
+                key_cache,
+                value_cache,
+                input_metadata.slot_mapping.flatten(),
+                input_metadata.kv_cache_dtype,
+            )
 
         # if hasattr(input_metadata, 'to_rank') and input_metadata.to_rank != -1:
         #     assert input_metadata.is_prompt

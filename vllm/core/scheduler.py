@@ -366,15 +366,6 @@ class Scheduler:
 
     def _schedule_prefill(self) -> SchedulerOutputs:
         # Join waiting sequences if possible.
-        if len(self.waiting) <= self.scheduler_config.max_num_seqs:
-            return SchedulerOutputs(scheduled_seq_groups=[],
-                                    prompt_run=False,
-                                    num_batched_tokens=0,
-                                    blocks_to_swap_in={},
-                                    blocks_to_swap_out={},
-                                    blocks_to_copy={},
-                                    ignored_seq_groups=[],
-                                    )
         if not self.swapped: # non empty [swapped] means no more [running] is allowed
             ignored_seq_groups: List[SequenceGroup] = []
             scheduled: List[SequenceGroup] = []
