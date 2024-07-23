@@ -168,7 +168,8 @@ class LLMEngine:
             raise ValueError("Invalid engine_type")
 
         self.messager.pass_cache(self.driver_worker.gpu_cache,
-                                 self.driver_worker.cpu_cache)
+                                 self.driver_worker.cpu_cache,
+                                 self.driver_worker.kv_buffer)
 
     def _init_workers(self):
         # Lazy import the Worker to avoid importing torch.cuda/xformers

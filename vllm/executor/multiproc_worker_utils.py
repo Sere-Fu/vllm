@@ -2,6 +2,8 @@ import asyncio
 import multiprocessing
 import os
 import sys
+import torch
+import time
 import threading
 import traceback
 import uuid
@@ -9,12 +11,13 @@ from dataclasses import dataclass
 from multiprocessing import Queue
 from multiprocessing.connection import wait
 from multiprocessing.process import BaseProcess
-from typing import (Any, Callable, Dict, Generic, List, Optional, TextIO,
+from typing import (Any, Callable, Dict, Generic, List, Optional, TextIO, Tuple,
                     TypeVar, Union)
 
 from vllm.worker.messager import KVPusher, KVPuller
-from vllm.worker.cache_engine import KVCache
 from vllm.logger import init_logger
+
+KVCache = Tuple[torch.Tensor, torch.Tensor]
 
 logger = init_logger(__name__)
 
@@ -160,27 +163,21 @@ class MessagerWrapper:
 
         self.process.start()
 
-    def _enqueue_task(self, future: Union[ResultFuture, asyncio.Future],
-                      method: str, args, kwargs):
-        task_id = uuid.uuid4()
-        self.tasks[task_id] = future
-        try:
-            self._task_queue.put((task_id, method, args, kwargs))
-        except BaseException as e:
-            del self.tasks[task_id]
-            raise ChildProcessError("worker died") from e
-
-    def pass_cache(self, gpu_cache: List[KVCache], cpu_cache: List[KVCache]):
+    def pass_cache(self, gpu_cache: List[KVCache], cpu_cache: List[KVCache], kv_buffer: List[KVCache]):
         try:
             self._task_queue.put(gpu_cache)
             self._task_queue.put(cpu_cache)
+            self._task_queue.put(kv_buffer)
         except BaseException as e:
             raise ChildProcessError("worker died") from e
 
     def execute_method(self, method: str, *args, **kwargs):
-        future: ResultFuture = ResultFuture()
-        self._enqueue_task(future, method, args, kwargs)
-        return future
+        try:
+            s = time.perf_counter()
+            self._task_queue.put((method, args, kwargs))
+            print(f"{method} {1000 * (time.perf_counter() - s)} ms", file=sys.stderr)
+        except BaseException as e:
+            raise ChildProcessError("worker died") from e
 
     async def execute_method_async(self, method: str, *args, **kwargs):
         future = asyncio.get_running_loop().create_future()
@@ -214,32 +211,28 @@ def _run_worker_process(
 
     gpu_cache = task_queue.get()
     cpu_cache = task_queue.get()
+    kv_buffer = task_queue.get()
     logger.info("gpu and cpu cache initilized in messager")
     # Initialize worker
     if role == 'pusher':
-        messager = KVPusher(gpu_cache, cpu_cache)
+        messager = KVPusher(gpu_cache, cpu_cache, kv_buffer)
     elif role == 'puller':
-        messager = KVPuller(32, result_queue, gpu_cache, cpu_cache)
+        messager = KVPuller(32, result_queue, gpu_cache, cpu_cache, kv_buffer)
 
     # Accept tasks from the engine in task_queue
     # and return task output in result_queue
-    logger.info("Worker ready; awaiting tasks")
+    logger.info(f"{role} ready; awaiting tasks")
     try:
         for items in iter(task_queue.get, _TERMINATE):
-            output = None
-            exception = None
-            task_id, method, args, kwargs = items
+            method, args, kwargs = items
             try:
                 executor = getattr(messager, method)
-                output = executor(*args, **kwargs)
+                executor(*args, **kwargs)
             except BaseException as e:
                 tb = traceback.format_exc()
                 logger.error(
                     "Exception in worker %s while processing method %s: %s, %s",
                     process_name, method, e, tb)
-                exception = e
-            result_queue.put(
-                Result(task_id=task_id, value=output, exception=exception))
     except KeyboardInterrupt:
         pass
     except Exception:

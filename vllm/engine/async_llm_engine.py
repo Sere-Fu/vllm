@@ -182,6 +182,7 @@ class _AsyncLLMEngine(LLMEngine):
     def __init__(self, wrapper, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.wrapper = wrapper
+        self.s_kvc = None
 
     async def step_async(self) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
@@ -194,6 +195,8 @@ class _AsyncLLMEngine(LLMEngine):
         the sequences and returns the newly generated results.
         """
         if get_engine_type() == EngineType.PREFILL:
+            if not self.s_kvc:
+                self.s_kvc = SendKVCacheCoordinator(self.messager)
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("prefill")
         elif get_engine_type() == EngineType.DECODING:
             seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule("decode")
@@ -222,6 +225,7 @@ class _AsyncLLMEngine(LLMEngine):
                     driver_kwargs={
                         "seq_group_metadata_list": seq_group_metadata_list,
                         "messager": self.messager,
+                        "s_kvc": self.s_kvc,
                     })
             else:
                 print(f"scheduled decode {len(seq_group_metadata_list)}:", time.perf_counter(), file=sys.stderr)

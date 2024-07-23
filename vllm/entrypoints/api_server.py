@@ -93,12 +93,12 @@ async def query(request: Request) -> Response:
             block_tables[seq.seq_id] = scheduler.block_manager.get_block_table(seq)
             bts.append(block_tables)
 
-        to_receive = coalesce_blocks([block
-                                for block_tables in bts
-                                for blocks in block_tables.values()
-                                for block in blocks ])
+        # to_receive = coalesce_blocks([block
+        #                         for block_tables in bts
+        #                         for blocks in block_tables.values()
+        #                         for block in blocks ])
         ret = {"decision": "yes", "encoded_bts": marshalToB64String(bts)}
-        engine.engine.messager.execute_method("receive_kv", to_receive=to_receive)
+        engine.engine.messager.execute_method("receive_kv_whole")
     else:
         ret = {"decision": "no"}
 

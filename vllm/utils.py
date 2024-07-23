@@ -1,5 +1,6 @@
 import enum
 import os
+import time
 import sys
 from contextlib import contextmanager
 import socket
@@ -26,6 +27,7 @@ from safetensors.torch import save
 
 from vllm.logger import init_logger
 from vllm._C import cache_ops
+from vllm.executor.multiproc_worker_utils import MessagerWrapper
 
 T = TypeVar("T")
 logger = init_logger(__name__)
@@ -138,6 +140,13 @@ def perf_execution(perf_item):
     elapsed_time_ms = start_event.elapsed_time(end_event)
     print(f"{perf_item}: {elapsed_time_ms} ms", file=sys.stderr)
 
+@contextmanager
+def time_execution(perf_item):
+    start = time.perf_counter()
+
+    yield
+
+    print(f"{perf_item}: {1000 * (time.perf_counter()-start)} ms")
 
 def is_hip() -> bool:
     return torch.version.hip is not None
@@ -342,20 +351,21 @@ def get_packet_type(current_frame_index, batch_frames) -> PacketType:
         return PacketType.KV_CACHE
 
 class SendKVCacheCoordinator:
-    def __init__(self, conduit: asyncio.Queue):
-        self.conduit = conduit
+    def __init__(self, messager: MessagerWrapper):
+        self.messager = messager
         self.wip = []
 
-    def submit(self, k, v, ith, event):
-        self.wip.append((k, v, ith, event))
+    def submit(self, k, v, num_slots, ith, event):
+        self.wip.append((k, v, num_slots, ith, event))
 
     def check(self):
-        for i, (k, v, _, event) in enumerate(self.wip):
+        for i, ( _, _, num_slots, ith, event) in enumerate(self.wip):
             if event.query():
-                packet = form_packet(PacketType.KV_CACHE, k)
-                self.conduit.put_nowait((False, packet))
-                packet = form_packet(PacketType.KV_CACHE, v)
-                self.conduit.put_nowait((False, packet))
+                self.messager.execute_method(
+                    "send_kv_whole",
+                    num_slots=num_slots,
+                    ith=ith,
+                )
             else:
                 self.wip = self.wip[i:]
                 return

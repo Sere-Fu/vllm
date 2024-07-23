@@ -95,22 +95,39 @@ class PagedAttention(nn.Module):
         # vectors will not be cached. This happens during the initial memory
         # profiling run.
         if key_cache is not None and value_cache is not None:
-            cache_ops.reshape_and_cache(
-                key,
-                value,
-                key_cache,
-                value_cache,
-                input_metadata.slot_mapping.flatten(),
-                input_metadata.kv_cache_dtype,
-            )
+            if not input_metadata.is_prompt:
+                cache_ops.reshape_and_cache(
+                    key,
+                    value,
+                    key_cache,
+                    value_cache,
+                    input_metadata.slot_mapping.flatten(),
+                    input_metadata.kv_cache_dtype,
+                )
 
-        if hasattr(input_metadata, "should_send_kv") and input_metadata.should_send_kv:
+        if hasattr(input_metadata, 'should_send_kv') and input_metadata.should_send_kv:
             assert input_metadata.is_prompt
-            input_metadata.messager.execute_method(
-                "send_kv",
-                ith=ith,
-                to_send=input_metadata.to_send,
-            )
+            # input_metadata.messager.execute_method(
+            #     "send_kv_whole",
+            #     ith=ith,
+            #     k=key,
+            #     v=value,
+            # )
+            with torch.cuda.stream(input_metadata.transfer_stream):
+                input_metadata.s_kvc.check()
+
+                num_slots = key.shape[0]
+                print(f"kangsan debug {key.shape}", file=sys.stderr)
+                key_buffer = input_metadata.kv_buffers[ith][0]
+                value_buffer = input_metadata.kv_buffers[ith][1]
+                key_buffer[:num_slots].copy_(key, non_blocking=True)
+                value_buffer[:num_slots].copy_(value, non_blocking=True)
+
+                event = torch.cuda.Event()
+                event.record()
+                input_metadata.s_kvc.submit(
+                    key, value, num_slots,
+                    ith, event)
 
         if input_metadata.is_prompt:
             # Prompt run.

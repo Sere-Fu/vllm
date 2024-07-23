@@ -16,7 +16,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
-from vllm.utils import in_wsl, coalesce_blocks, perf_execution
+from vllm.utils import in_wsl, coalesce_blocks, perf_execution, SendKVCacheCoordinator
 from vllm.executor.multiproc_worker_utils import MessagerWrapper
 
 logger = init_logger(__name__)
@@ -580,6 +580,7 @@ class ModelRunner:
         kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
         kv_buffers: List[Tuple[torch.Tensor, torch.Tensor]],
         messager: MessagerWrapper,
+        s_kvc: SendKVCacheCoordinator = None,
     ) -> Optional[SamplerOutput]:
         (input_tokens, input_positions, input_metadata, sampling_metadata,
          lora_requests,
@@ -591,7 +592,9 @@ class ModelRunner:
                                                     for blocks in seq_group_metadata.block_tables.values()
                                                     for block in blocks])
         input_metadata.should_send_kv = True
+        input_metadata.transfer_stream = self.transfer_stream
         input_metadata.messager = messager
+        input_metadata.s_kvc = s_kvc
 
         if self.lora_config:
             self.set_active_loras(lora_requests, lora_mapping)
