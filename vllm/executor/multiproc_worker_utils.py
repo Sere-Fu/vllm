@@ -78,21 +78,28 @@ def _set_future_result(future: Union[ResultFuture, asyncio.Future],
 class ResultHandler(threading.Thread):
     """Handle results from all workers (in background thread)"""
 
-    def __init__(self) -> None:
+    def __init__(self, scheduler) -> None:
         super().__init__(daemon=True)
         self.result_queue = mp.Queue()
-        self.tasks: Dict[uuid.UUID, Union[ResultFuture, asyncio.Future]] = {}
+        self.scheduler = scheduler
 
     def run(self):
-        for result in iter(self.result_queue.get, _TERMINATE):
-            future = self.tasks.pop(result.task_id)
-            _set_future_result(future, result)
+        for _ in iter(self.result_queue.get, _TERMINATE):
+            if self.scheduler.without_kv:
+                self.scheduler.with_kv.extend(self.scheduler.without_kv.pop(0))
+                self.evt.set()
+            else:
+                self.scheduler.kv_ready += 1
+
         # Ensure that all waiters will receive an exception
         for task_id, future in self.tasks.items():
             _set_future_result(
                 future,
                 Result(task_id=task_id,
                        exception=ChildProcessError("worker died")))
+
+    def inject_event(self, evt):
+        self.evt = evt
 
     def close(self):
         self.result_queue.put(_TERMINATE)
@@ -150,7 +157,6 @@ class MessagerWrapper:
     def __init__(self, role: str, num_layers: int, result_handler: ResultHandler) -> None:
         self._task_queue = mp.Queue()
         self.result_queue = result_handler.result_queue
-        self.tasks = result_handler.tasks
         self.process: BaseProcess = mp.Process(  # type: ignore[attr-defined]
             target=_run_worker_process,
             name="messager",

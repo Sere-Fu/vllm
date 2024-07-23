@@ -40,9 +40,10 @@ class Messager:
     def receive_kv_forever(self):
         ith = 0
         while True:
-            torch.frombuffer(memoryview(self.sock.recv(copy=False)), dtype=torch.float16)
-            torch.frombuffer(memoryview(self.sock.recv(copy=False)), dtype=torch.float16)
+            k = torch.frombuffer(memoryview(self.sock.recv(copy=False)), dtype=torch.float16)
+            v = torch.frombuffer(memoryview(self.sock.recv(copy=False)), dtype=torch.float16)
             if ith == self.num_layers-1:
                 ith = 0
                 logger.info(f"end receiving kv cache")
+                self.result_queue.put(b'0x01')
             ith += 1

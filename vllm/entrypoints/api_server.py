@@ -94,10 +94,6 @@ async def query(request: Request) -> Response:
             block_tables[seq.seq_id] = scheduler.block_manager.get_block_table(seq)
             bts.append(block_tables)
 
-        # to_receive = coalesce_blocks([block
-        #                         for block_tables in bts
-        #                         for blocks in block_tables.values()
-        #                         for block in blocks ])
         ret = {"decision": "yes", "encoded_bts": marshalToB64String(bts)}
     else:
         ret = {"decision": "no"}
@@ -110,9 +106,11 @@ async def decode(request: Request) -> Response:
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
     scheduler = engine.engine.scheduler
-    scheduler.without_kv.append(seq_groups)
-    scheduler.with_kv.extend(scheduler.without_kv.pop(0))
-    engine._request_tracker.new_requests_event.set()
+    if scheduler.kv_ready > 0:
+        scheduler.with_kv.extend(seq_groups)
+        scheduler.kv_ready -= 1
+    else:
+        scheduler.without_kv.append(seq_groups)
 
     ret = {"output": "ack"}
 

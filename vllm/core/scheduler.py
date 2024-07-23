@@ -109,6 +109,7 @@ class Scheduler:
 
         self.without_kv: List[List[SequenceGroup]] = []
         self.with_kv: List[SequenceGroup] = []
+        self.kv_ready = 0
 
     @property
     def lora_enabled(self) -> bool:

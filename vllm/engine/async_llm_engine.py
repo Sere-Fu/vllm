@@ -437,6 +437,8 @@ class AsyncLLMEngine:
         if self.is_running:
             raise RuntimeError("Background loop is already running.")
         self._request_tracker.init_event()
+        self.engine.result_handler.inject_event(self._request_tracker.new_requests_event)
+        self.engine.result_handler.start()
 
         if get_engine_type() == EngineType.PREFILL:
             self._background_loop_unshielded = asyncio.get_event_loop(
@@ -509,7 +511,7 @@ class AsyncLLMEngine:
         if request_outputs:
             if request_outputs[0].finished:
                 now = time.perf_counter()
-                print(f"batch decode {len(request_outputs)} finished takes {now-self.pre_batch_finished} s at {now}, waiting {len(self.engine.scheduler.with_kv)} :", file=sys.stderr)
+                print(f"batch decode {len(request_outputs)} finished takes {now-self.pre_batch_finished} s at {now}, without_kv {sum([len(seq_groups) for seq_groups in self.engine.scheduler.without_kv])}, with_kv {len(self.engine.scheduler.with_kv)} :", file=sys.stderr)
                 self.pre_batch_finished = now
 
         # Put the outputs into the corresponding streams.
@@ -529,16 +531,6 @@ class AsyncLLMEngine:
             await self.engine.abort_request.remote(request_ids)
         else:
             self.engine.abort_request(request_ids)
-
-    # async def open_websocket_to_decode_worker(self):
-    #     timeout = aiohttp.ClientTimeout(total=3 * 3600)
-    #     async with aiohttp.ClientSession(timeout=timeout) as session:
-    #         async with session.ws_connect("http://127.0.0.1:8001/decode") as ws:
-    #             while True:
-    #                 expect_return, data = await self.engine.to_t.get()
-    #                 await ws.send_bytes(data)
-    #                 if expect_return:
-    #                     self.engine.from_t.put_nowait(await ws.receive_str())
 
     async def run_engine_loop_prefill(self):
         # Initialize the RequestTracker here so it uses the right event loop.

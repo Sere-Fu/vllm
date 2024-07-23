@@ -134,10 +134,10 @@ class LLMEngine:
 
         # Profile the memory usage and initialize the cache.
         self._init_cache()
-        self._init_messager()
 
         # Create the scheduler.
         self.scheduler = Scheduler(scheduler_config, cache_config, lora_config)
+        self._init_messager()
 
         # Metric Logging.
         if self.log_stats:
@@ -160,7 +160,7 @@ class LLMEngine:
 
     def _init_messager(self):
         num_layers = self.model_config.get_num_layers(self.parallel_config)
-        result_handler = ResultHandler()
+        result_handler = ResultHandler(self.scheduler)
         if get_engine_type() == EngineType.PREFILL:
             self.messager = MessagerWrapper(
                 role='pusher',
@@ -174,6 +174,7 @@ class LLMEngine:
         else:
             raise ValueError("Invalid engine_type")
 
+        self.result_handler = result_handler
         self.messager.pass_cache(self.driver_worker.gpu_cache,
                                  self.driver_worker.cpu_cache,
                                  self.driver_worker.kv_buffer)
