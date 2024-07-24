@@ -1,6 +1,7 @@
 import argparse
 import json
 import time
+import asyncio
 import sys
 from typing import AsyncGenerator, Dict, List
 
@@ -81,6 +82,7 @@ async def query(request: Request) -> Response:
     if not engine.is_running:
         engine.start_background_loop()
     request_dict = await request.json()
+    await asyncio.sleep(0)
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
     scheduler = engine.engine.scheduler
@@ -91,11 +93,14 @@ async def query(request: Request) -> Response:
             block_tables: Dict[int, List[int]] = {}
             seq = seq_group.get_seqs()[0]
             seq.status = SequenceStatus.WAITING
+            await asyncio.sleep(0)
             scheduler._allocate(seq_group)
             block_tables[seq.seq_id] = scheduler.block_manager.get_block_table(seq)
             bts.append(block_tables)
 
+        await asyncio.sleep(0)
         ret = {"decision": "yes", "encoded_bts": marshalToB64String(bts)}
+        await asyncio.sleep(0)
         engine.engine.messager.execute_method("receive_kv")
         print(f"incoming {len(seq_groups)}", file=sys.stderr)
     else:
@@ -106,6 +111,7 @@ async def query(request: Request) -> Response:
 @app.post("/decode")
 async def decode(request: Request) -> Response:
     request_dict = await request.json()
+    await asyncio.sleep(0)
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
     scheduler = engine.engine.scheduler
@@ -116,6 +122,7 @@ async def decode(request: Request) -> Response:
         assert scheduler.kv_ready == 1
         scheduler.with_kv.extend(scheduler.without_kv.pop(0))
         scheduler.kv_ready -= 1
+        await asyncio.sleep(0)
         engine._request_tracker.new_requests_event.set()
 
     ret = {"output": "ack"}
