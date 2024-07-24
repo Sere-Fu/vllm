@@ -251,6 +251,7 @@ class Worker:
                                                 self.kv_buffer,
                                                 messager,
                                                 s_kvc)
+        s_kvc.check()
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:

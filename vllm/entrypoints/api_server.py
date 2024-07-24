@@ -1,5 +1,7 @@
 import argparse
 import json
+import time
+import sys
 from typing import AsyncGenerator, Dict, List
 
 from fastapi import FastAPI, Request
@@ -78,7 +80,6 @@ async def generate(request: Request) -> Response:
 async def query(request: Request) -> Response:
     if not engine.is_running:
         engine.start_background_loop()
-        engine.engine.messager.execute_method("receive_kv_forever")
     request_dict = await request.json()
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
@@ -95,6 +96,8 @@ async def query(request: Request) -> Response:
             bts.append(block_tables)
 
         ret = {"decision": "yes", "encoded_bts": marshalToB64String(bts)}
+        engine.engine.messager.execute_method("receive_kv")
+        print(f"incoming {len(seq_groups)}", file=sys.stderr)
     else:
         ret = {"decision": "no"}
 
@@ -106,11 +109,14 @@ async def decode(request: Request) -> Response:
     seq_groups = unmarshalFromB64String(request_dict.pop("encoded_seq_groups"))
 
     scheduler = engine.engine.scheduler
+
+
+    scheduler.without_kv.append(seq_groups)
     if scheduler.kv_ready > 0:
-        scheduler.with_kv.extend(seq_groups)
+        assert scheduler.kv_ready == 1
+        scheduler.with_kv.extend(scheduler.without_kv.pop(0))
         scheduler.kv_ready -= 1
-    else:
-        scheduler.without_kv.append(seq_groups)
+        engine._request_tracker.new_requests_event.set()
 
     ret = {"output": "ack"}
 

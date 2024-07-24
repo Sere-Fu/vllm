@@ -37,6 +37,17 @@ class Messager:
         if ith == self.num_layers-1:
             logger.info(f"end sending kv cache")
 
+    def receive_kv(self):
+        ith = 0
+        while True:
+            k = torch.frombuffer(memoryview(self.sock.recv(copy=False)), dtype=torch.float16)
+            v = torch.frombuffer(memoryview(self.sock.recv(copy=False)), dtype=torch.float16)
+            if ith == self.num_layers-1:
+                logger.info(f"end receiving kv cache")
+                self.result_queue.put(b'0x01')
+                return
+            ith += 1
+
     def receive_kv_forever(self):
         ith = 0
         while True:
