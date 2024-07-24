@@ -117,8 +117,8 @@ class PagedAttention(nn.Module):
                 input_metadata.s_kvc.check()
 
                 num_slots = key.shape[0]
-                key_buffer = input_metadata.kv_buffers[ith][0]
-                value_buffer = input_metadata.kv_buffers[ith][1]
+                key_buffer = input_metadata.cpu_buffers[ith][0]
+                value_buffer = input_metadata.cpu_buffers[ith][1]
                 key_buffer[:num_slots].copy_(key, non_blocking=True)
                 value_buffer[:num_slots].copy_(value, non_blocking=True)
 

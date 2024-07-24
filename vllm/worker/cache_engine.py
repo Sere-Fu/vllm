@@ -38,7 +38,8 @@ class CacheEngine:
         self.block_size = cache_config.block_size
         self.num_gpu_blocks = cache_config.num_gpu_blocks
         self.num_cpu_blocks = cache_config.num_cpu_blocks
-        self.num_kv_buffer_slots = 10000
+        self.num_gpu_buffer_slots = 10000
+        self.num_cpu_buffer_slots = 10000
 
         if cache_config.cache_dtype == "auto":
             self.dtype = model_config.dtype
@@ -48,7 +49,9 @@ class CacheEngine:
         # Initialize the cache.
         self.gpu_cache = self.allocate_gpu_cache()
         self.cpu_cache = self.allocate_cpu_cache()
-        self.kv_buffer = self.allocate_cpu_kv_buffer()
+
+        self.gpu_buffer = self.allocate_gpu_buffer()
+        self.cpu_buffer = self.allocate_cpu_buffer()
 
         # Initialize the stream for caching operations.
         self.cache_stream = torch.cuda.Stream()
@@ -117,8 +120,25 @@ class CacheEngine:
             cpu_cache.append((key_blocks, value_blocks))
         return cpu_cache
 
-    def allocate_cpu_kv_buffer(self) -> List[KVCache]:
-        cpu_kv_buffer: List[KVCache] = []
+    def allocate_gpu_buffer(self) -> List[KVCache]:
+        gpu_buffer: List[KVCache] = []
+        kv_shape = (self.num_heads, self.head_size)
+        for _ in range(self.num_layers):
+            key_slots = torch.empty(
+                size=(self.num_gpu_buffer_slots, *kv_shape),
+                dtype=self.dtype,
+                device="cuda",
+            )
+            value_slots = torch.empty(
+                size=(self.num_gpu_buffer_slots, *kv_shape),
+                dtype=self.dtype,
+                device="cuda",
+            )
+            gpu_buffer.append((key_slots, value_slots))
+        return gpu_buffer
+
+    def allocate_cpu_buffer(self) -> List[KVCache]:
+        cpu_buffer: List[KVCache] = []
         kv_shape = (self.num_heads, self.head_size)
         pin_memory = not in_wsl()
         if not pin_memory:
@@ -128,19 +148,19 @@ class CacheEngine:
                            "This may slow down the performance.")
         for _ in range(self.num_layers):
             key_slots = torch.empty(
-                size=(self.num_kv_buffer_slots, *kv_shape),
+                size=(self.num_cpu_buffer_slots, *kv_shape),
                 dtype=self.dtype,
                 pin_memory=pin_memory,
                 device="cpu",
             )
             value_slots = torch.empty(
-                size=(self.num_kv_buffer_slots, *kv_shape),
+                size=(self.num_cpu_buffer_slots, *kv_shape),
                 dtype=self.dtype,
                 pin_memory=pin_memory,
                 device="cpu",
             )
-            cpu_kv_buffer.append((key_slots, value_slots))
-        return cpu_kv_buffer
+            cpu_buffer.append((key_slots, value_slots))
+        return cpu_buffer
 
     def _swap(
         self,

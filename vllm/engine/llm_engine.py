@@ -177,7 +177,8 @@ class LLMEngine:
         self.result_handler = result_handler
         self.messager.pass_cache(self.driver_worker.gpu_cache,
                                  self.driver_worker.cpu_cache,
-                                 self.driver_worker.kv_buffer)
+                                 self.driver_worker.gpu_buffer,
+                                 self.driver_worker.cpu_buffer)
 
     def _init_workers(self):
         # Lazy import the Worker to avoid importing torch.cuda/xformers

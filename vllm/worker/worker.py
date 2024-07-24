@@ -67,6 +67,9 @@ class Worker:
         self.cache_engine = None
         self.cache_events = None
         self.gpu_cache = None
+        self.cpu_cache = None
+        self.gpu_buffer = None
+        self.cpu_buffer = None
 
     def init_model(self) -> None:
         if self.device_config.device.type == "cuda":
@@ -149,7 +152,8 @@ class Worker:
         self.cache_events = self.cache_engine.events
         self.gpu_cache = self.cache_engine.gpu_cache
         self.cpu_cache = self.cache_engine.cpu_cache
-        self.kv_buffer = self.cache_engine.kv_buffer
+        self.gpu_buffer = self.cache_engine.gpu_buffer
+        self.cpu_buffer = self.cache_engine.cpu_buffer
         self.model_runner.set_block_size(self.cache_engine.block_size)
 
     def warm_up_model(self) -> None:
@@ -248,7 +252,7 @@ class Worker:
 
         output = self.model_runner.prefill(seq_group_metadata_list,
                                                 self.gpu_cache,
-                                                self.kv_buffer,
+                                                self.cpu_buffer,
                                                 messager,
                                                 s_kvc)
         s_kvc.check()

@@ -170,11 +170,12 @@ class MessagerWrapper:
 
         self.process.start()
 
-    def pass_cache(self, gpu_cache: List[KVCache], cpu_cache: List[KVCache], kv_buffer: List[KVCache]):
+    def pass_cache(self, gpu_cache, cpu_cache, gpu_buffer, cpu_buffer: list[KVCache]):
         try:
             self._task_queue.put(gpu_cache)
             self._task_queue.put(cpu_cache)
-            self._task_queue.put(kv_buffer)
+            self._task_queue.put(gpu_buffer)
+            self._task_queue.put(cpu_buffer)
         except BaseException as e:
             raise ChildProcessError("worker died") from e
 
@@ -217,9 +218,10 @@ def _run_worker_process(
 
     gpu_cache = task_queue.get()
     cpu_cache = task_queue.get()
-    kv_buffer = task_queue.get()
+    gpu_buffer = task_queue.get()
+    cpu_buffer = task_queue.get()
     # Initialize worker
-    messager = Messager(role, "tcp://127.0.0.1:7777", num_layers, result_queue, gpu_cache, cpu_cache, kv_buffer)
+    messager = Messager(role, "tcp://127.0.0.1:7777", num_layers, result_queue, gpu_cache, cpu_cache, gpu_buffer, cpu_buffer)
 
     # Accept tasks from the engine in task_queue
     # and return task output in result_queue

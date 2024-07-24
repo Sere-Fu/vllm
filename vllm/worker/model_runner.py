@@ -586,7 +586,7 @@ class ModelRunner:
          lora_requests,
          lora_mapping) = self.prepare_input_tensors(seq_group_metadata_list)
 
-        input_metadata.kv_buffers = kv_buffers
+        input_metadata.cpu_buffers = kv_buffers
         input_metadata.to_send = coalesce_blocks([block
                                                     for seq_group_metadata in seq_group_metadata_list
                                                     for blocks in seq_group_metadata.block_tables.values()
