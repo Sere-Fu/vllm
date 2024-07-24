@@ -858,7 +858,17 @@ class KVCacheCoordinator:
         self.n_issue = 0
 
     def _invoke(self, buf, op, cb):
-        assert len(self.pending) < KVCacheCoordinator.MAX_WIP * 4, "Too many pending IO OPs"
+        if len(self.pending) >= KVCacheCoordinator.MAX_WIP * 4:
+            tbd = len(self.wip) + len(self.pending)
+            t0 = time.perf_counter()
+            n_completed0 = self.n_completed
+            while len(self.pending) >= KVCacheCoordinator.MAX_WIP * 4:
+                assert time.perf_counter() - t0 < 0.1, f'👾 Stall {(time.perf_counter() - t0)*1000:.2f} ms, '\
+                    f'completed {self.n_completed-n_completed0}/{tbd}'
+                self.complete_io_and_dispatch_pending()
+            print(f'👾 Stall {(time.perf_counter() - t0)*1000:.2f} ms, '
+                  f'completed {self.n_completed-n_completed0}/{tbd}')
+
         if len(self.wip) < KVCacheCoordinator.MAX_WIP:
             self.n_issue += 1
             self.wip.append((buf, op(), cb))
@@ -893,13 +903,16 @@ class KVCacheCoordinator:
                 self.wip.append((buf, op(), cb))
             else:
                 break
-        if nwip != len(self.wip):
-            print(f'👾completed={nwip-len(self.wip)}, wip={len(self.wip)}, pending={len(self.pending)}, '
-                  f'interval={elapsed*1000:.3f}ms, bandwidth={nbytes/elapsed/1024**3:.3f}GB/s, '
-                  f'accumaleted_issue={self.n_issue}, accumaleted_complete={self.n_completed}')
+        # if nwip != len(self.wip):
+        #     print(f'👾completed={nwip-len(self.wip)}, wip={len(self.wip)}, pending={len(self.pending)}, '
+        #           f'interval={elapsed*1000:.3f}ms, bandwidth={nbytes/elapsed/1024**3:.3f}GB/s, '
+        #           f'accumaleted_issue={self.n_issue}, accumaleted_complete={self.n_completed}')
     
     def has_running_io(self):
         return len(self.wip) > 0 or len(self.pending) > 0
+    
+    def next_id(self):
+        return self.n_issue + len(self.pending)
 
 _KVCC = None
 

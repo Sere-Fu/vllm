@@ -1372,8 +1372,10 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 kvcc.irecv(v_buf, src=model_input.prank, cb=mkcb(i, k_buf, v_buf))
             logits_buf = torch.empty((1, self.vocab_size), dtype=self.model_config.dtype, device=self.device)
             assert model_input.output_future is not None
+            ioid = kvcc.next_id()
+            # print(f'👹 {ioid}@{time.time()}: issue irecv')
             def cb():
-                # print(f'👹recv logits: shape={logits_buf.shape}. let\'s go continue')
+                # print(f'👹 {ioid}@{time.time()}: finsh irecv logits: shape={logits_buf.shape}. let\'s go continue')
                 output: SamplerOutput = self.model.sample(
                     logits=logits_buf,
                     sampling_metadata=model_input.sampling_metadata,
@@ -1402,8 +1404,9 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                                            model_input.sampling_metadata)
         
         if model_input.drank is not None:
-            # print(f'👹send logits: shape={logits.shape}')
-            get_kvcc().isend(logits, dst=model_input.drank)
+            kvcc = get_kvcc()
+            # print(f'👹 {kvcc.next_id()}@{time.time()}: issue isend logits: shape={logits.shape}')
+            kvcc.isend(logits, dst=model_input.drank)
             return []
 
         if not self.is_driver_worker:
