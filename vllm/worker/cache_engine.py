@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple
 import torch
 
 from vllm._C import cache_ops
-from vllm.config import CacheConfig, ModelConfig, ParallelConfig
+from vllm.config import CacheConfig, ModelConfig, ParallelConfig, SchedulerConfig
 from vllm.logger import init_logger
 from vllm.utils import in_wsl, STR_DTYPE_TO_TORCH_DTYPE
 
@@ -26,6 +26,7 @@ class CacheEngine:
         cache_config: CacheConfig,
         model_config: ModelConfig,
         parallel_config: ParallelConfig,
+        scheduler_config: SchedulerConfig,
     ) -> None:
         self.cache_config = cache_config
         self.model_config = model_config
@@ -38,8 +39,8 @@ class CacheEngine:
         self.block_size = cache_config.block_size
         self.num_gpu_blocks = cache_config.num_gpu_blocks
         self.num_cpu_blocks = cache_config.num_cpu_blocks
-        self.num_gpu_buffer_slots = 10000
-        self.num_cpu_buffer_slots = 10000
+        self.num_gpu_buffer_slots = scheduler_config.max_num_batched_tokens
+        self.num_cpu_buffer_slots = scheduler_config.max_num_batched_tokens
 
         if cache_config.cache_dtype == "auto":
             self.dtype = model_config.dtype
