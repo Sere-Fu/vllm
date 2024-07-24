@@ -154,7 +154,7 @@ class MessagerWrapper:
     """Local process wrapper for vllm.worker.Worker,
     for handling single-node multi-GPU tensor parallel."""
 
-    def __init__(self, role: str, num_layers: int, result_handler: ResultHandler) -> None:
+    def __init__(self, role: str, num_layers: int, kv_shape: Tuple[int, int], result_handler: ResultHandler) -> None:
         self._task_queue = mp.Queue()
         self.result_queue = result_handler.result_queue
         self.process: BaseProcess = mp.Process(  # type: ignore[attr-defined]
@@ -165,6 +165,7 @@ class MessagerWrapper:
                 result_queue=self.result_queue,
                 role=role,
                 num_layers=num_layers,
+                kv_shape=kv_shape
             ),
             daemon=True)
 
@@ -207,6 +208,7 @@ def _run_worker_process(
     result_queue: Queue,
     role: str,
     num_layers: int,
+    kv_shape: Tuple[int, int],
 ) -> None:
     """Worker process event loop"""
 
@@ -221,7 +223,7 @@ def _run_worker_process(
     gpu_buffer = task_queue.get()
     cpu_buffer = task_queue.get()
     # Initialize worker
-    messager = Messager(role, "tcp://127.0.0.1:7777", num_layers, result_queue, gpu_cache, cpu_cache, gpu_buffer, cpu_buffer)
+    messager = Messager(role, "tcp://127.0.0.1:7777", num_layers, kv_shape, result_queue, gpu_cache, cpu_cache, gpu_buffer, cpu_buffer)
 
     # Accept tasks from the engine in task_queue
     # and return task output in result_queue

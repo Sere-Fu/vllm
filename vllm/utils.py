@@ -355,12 +355,18 @@ class SendKVCacheCoordinator:
         self.messager = messager
         self.wip = []
 
-    def submit(self, k, v, num_slots, ith, event):
-        self.wip.append((k, v, num_slots, ith, event))
+    def submit(self, k, v, num_slots, slot_mapping, ith, event):
+        self.wip.append((k, v, num_slots, slot_mapping, ith, event))
 
     def check(self):
-        for i, ( _, _, num_slots, ith, event) in enumerate(self.wip):
+        for i, ( _, _, num_slots, slot_mapping, ith, event) in enumerate(self.wip):
             if event.query():
+                if ith == 0:
+                    assert slot_mapping is not None
+                    self.messager.execute_method(
+                        "send_slot_mapping",
+                        slot_mapping=slot_mapping.cpu(),
+                    )
                 self.messager.execute_method(
                     "send_kv",
                     num_slots=num_slots,

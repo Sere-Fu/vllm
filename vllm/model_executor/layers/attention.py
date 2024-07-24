@@ -107,12 +107,6 @@ class PagedAttention(nn.Module):
 
         if hasattr(input_metadata, 'should_send_kv') and input_metadata.should_send_kv:
             assert input_metadata.is_prompt
-            # input_metadata.messager.execute_method(
-            #     "send_kv_whole",
-            #     ith=ith,
-            #     k=key,
-            #     v=value,
-            # )
             with torch.cuda.stream(input_metadata.transfer_stream):
                 input_metadata.s_kvc.check()
 
@@ -124,9 +118,10 @@ class PagedAttention(nn.Module):
 
                 event = torch.cuda.Event()
                 event.record()
-                input_metadata.s_kvc.submit(
-                    key, value, num_slots,
-                    ith, event)
+                if ith == 0:
+                    input_metadata.s_kvc.submit(key, value, num_slots, input_metadata.slot_mapping.flatten(), ith, event)
+                else:
+                    input_metadata.s_kvc.submit(key, value, num_slots, None, ith, event)
 
         if input_metadata.is_prompt:
             # Prompt run.
