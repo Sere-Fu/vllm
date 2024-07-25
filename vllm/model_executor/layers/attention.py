@@ -90,6 +90,9 @@ class PagedAttention(nn.Module):
         key = key.view(-1, self.num_kv_heads, self.head_size)
         value = value.view(-1, self.num_kv_heads, self.head_size)
 
+        event = torch.cuda.Event()
+        event.record()
+
         # Reshape the keys and values and store them in the cache.
         # If key_cache and value_cache are not provided, the new key and value
         # vectors will not be cached. This happens during the initial memory
@@ -108,6 +111,7 @@ class PagedAttention(nn.Module):
         if hasattr(input_metadata, 'should_send_kv') and input_metadata.should_send_kv:
             assert input_metadata.is_prompt
             with torch.cuda.stream(input_metadata.transfer_stream):
+                event.wait()
                 input_metadata.s_kvc.check()
 
                 num_slots = key.shape[0]
