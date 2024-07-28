@@ -14,6 +14,7 @@ from vllm.pooling_params import PoolingParams
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sampling_params import SamplingParams
 from vllm.splitwise.request import SplitwiseRequest
+from vllm.entrypoints.openai.protocol import GlobalSchedulerOutput
 
 if TYPE_CHECKING:
     from vllm.inputs import LLMInputs
@@ -435,6 +436,7 @@ class SequenceGroup:
         seqs: List[Sequence],
         arrival_time: float,
         sampling_params: Optional[SamplingParams] = None,
+        global_scheduler_output: Optional[GlobalSchedulerOutput] = None,
         lora_request: Optional[LoRARequest] = None,
         splitwise_request: Optional[SplitwiseRequest] = None,
         embeddings: Optional[List[float]] = None,
@@ -446,6 +448,7 @@ class SequenceGroup:
         self.request_id = request_id
         self.seqs_dict = {seq.seq_id: seq for seq in seqs}
         self.sampling_params = sampling_params
+        self.global_scheduler_output = global_scheduler_output
         self.metrics = RequestMetrics(arrival_time=arrival_time,
                                       last_token_time=arrival_time,
                                       first_scheduled_time=None,
@@ -643,7 +646,7 @@ class SequenceGroupMetadata:
         state: Internal state tied to this sequence group.
         multi_modal_data: Multi modal data.
         encoder_seq_data: Optional sequence data for encoder prompt
-                          (SequenceGroup.encoder_seq). Should be None 
+                          (SequenceGroup.encoder_seq). Should be None
                           unless you are working with an encoder/decoder
                           model.
         cross_block_table: Optional cross-attention block table associated

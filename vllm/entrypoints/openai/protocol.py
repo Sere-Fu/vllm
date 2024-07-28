@@ -106,6 +106,19 @@ class StreamOptions(OpenAIBaseModel):
     include_usage: Optional[bool] = True
     continuous_usage_stats: Optional[bool] = True
 
+class ComputeConfig(OpenAIBaseModel):
+    policy: Literal["chunked_prefill", "split"]
+    prompt_worker_address: Optional[str] = None
+    decoding_worker_address: Optional[str] = None
+
+class CacheConfig(OpenAIBaseModel):
+    target: Optional[str] = "GPU"
+    max_length: Optional[int] = 100
+    ttl_ms: Optional[int] = 1000
+
+class GlobalSchedulerOutput(OpenAIBaseModel):
+    compute: Optional[ComputeConfig] = None
+    cache: Optional[CacheConfig] = None
 
 class FunctionDefinition(OpenAIBaseModel):
     name: str
@@ -380,6 +393,8 @@ class CompletionRequest(OpenAIBaseModel):
     temperature: Optional[float] = 1.0
     top_p: Optional[float] = 1.0
     user: Optional[str] = None
+
+    global_scheduler_output: Optional[GlobalSchedulerOutput] = None
 
     # doc: begin-completion-sampling-params
     use_beam_search: Optional[bool] = False

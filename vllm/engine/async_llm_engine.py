@@ -25,6 +25,7 @@ from vllm.sequence import ExecuteModelRequest, SamplerOutput, SequenceGroup
 from vllm.usage.usage_lib import UsageContext
 from vllm.splitwise.splitwise import has_uncompleted_splitwise_io, notify_splitwise_prefill_and_resume_later
 from vllm.splitwise.request import SplitwiseRequest
+from vllm.entrypoints.openai.protocol import GlobalSchedulerOutput
 
 logger = init_logger(__name__)
 ENGINE_ITERATION_TIMEOUT_S = envs.VLLM_ENGINE_ITERATION_TIMEOUT_S
@@ -322,6 +323,7 @@ class _AsyncLLMEngine(LLMEngine):
             request_id: str,
             inputs: PromptInputs,
             params: Union[SamplingParams, PoolingParams],
+            global_scheduler_output: GlobalSchedulerOutput,
             arrival_time: Optional[float] = None,
             lora_request: Optional[LoRARequest] = None,
             splitwise_request: Optional[SplitwiseRequest] = None,
@@ -344,6 +346,7 @@ class _AsyncLLMEngine(LLMEngine):
             request_id=request_id,
             processed_inputs=processed_inputs,
             params=params,
+            global_scheduler_output=global_scheduler_output,
             arrival_time=arrival_time,
             lora_request=lora_request,
             splitwise_request=splitwise_request,
@@ -668,6 +671,7 @@ class AsyncLLMEngine:
         request_id: str,
         inputs: PromptInputs,
         params: Union[SamplingParams, PoolingParams],
+        global_scheduler_output: GlobalSchedulerOutput,
         arrival_time: Optional[float] = None,
         lora_request: Optional[LoRARequest] = None,
         splitwise_request: Optional[SplitwiseRequest] = None,
@@ -712,6 +716,7 @@ class AsyncLLMEngine:
             request_id,
             inputs=inputs,
             params=params,
+            global_scheduler_output=global_scheduler_output,
             arrival_time=arrival_time,
             lora_request=lora_request,
             splitwise_request=splitwise_request,
@@ -724,6 +729,7 @@ class AsyncLLMEngine:
         self,
         inputs: PromptInputs,
         sampling_params: SamplingParams,
+        global_scheduler_output: GlobalSchedulerOutput,
         request_id: str,
         lora_request: Optional[LoRARequest] = None,
         splitwise_request: Optional[SplitwiseRequest] = None,
@@ -744,7 +750,7 @@ class AsyncLLMEngine:
             request_id: The unique id of the request.
             lora_request: LoRA request to use for generation, if any.
             trace_headers: OpenTelemetry trace headers.
-            prompt_adapter_request: Prompt Adapter request to use 
+            prompt_adapter_request: Prompt Adapter request to use
                                             for generation, if any.
 
         Yields:
@@ -798,6 +804,7 @@ class AsyncLLMEngine:
                 request_id,
                 inputs,
                 sampling_params,
+                global_scheduler_output,
                 lora_request=lora_request,
                 splitwise_request=splitwise_request,
                 trace_headers=trace_headers,
@@ -887,6 +894,7 @@ class AsyncLLMEngine:
         request_id: str,
         inputs: PromptInputs,
         params: Union[SamplingParams, PoolingParams],
+        global_scheduler_output: GlobalSchedulerOutput,
         *,
         lora_request: Optional[LoRARequest] = None,
         splitwise_request: Optional[SplitwiseRequest] = None,
@@ -901,6 +909,7 @@ class AsyncLLMEngine:
             request_id,
             inputs,
             params,
+            global_scheduler_output,
             arrival_time=arrival_time,
             lora_request=lora_request,
             splitwise_request=splitwise_request,

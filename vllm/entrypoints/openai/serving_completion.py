@@ -154,6 +154,7 @@ class OpenAIServingCompletion(OpenAIServing):
                         "prompt_token_ids": prompt_ids
                     },
                     sampling_params,
+                    request.global_scheduler_output,
                     f"{request_id}-{i}",
                     lora_request=lora_request,
                     splitwise_request=splitwise_request,
