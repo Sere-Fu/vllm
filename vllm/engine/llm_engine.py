@@ -45,6 +45,7 @@ from vllm.usage.usage_lib import (UsageContext, is_usage_stats_enabled,
 from vllm.utils import Counter
 from vllm.version import __version__ as VLLM_VERSION
 from vllm.distributed.parallel_state import get_kvcc
+from vllm.entrypoints.openai.protocol import GlobalSchedulerOutput
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
@@ -90,13 +91,13 @@ class LLMEngine:
         scheduler_config: The configuration related to the request scheduler.
         device_config: The configuration related to the device.
         lora_config (Optional): The configuration related to serving multi-LoRA.
-        multimodal_config (Optional): The configuration related to multimodal 
+        multimodal_config (Optional): The configuration related to multimodal
             models.
         speculative_config (Optional): The configuration related to speculative
             decoding.
         executor_class: The model executor class for managing distributed
             execution.
-        prompt_adapter_config (Optional): The configuration related to serving 
+        prompt_adapter_config (Optional): The configuration related to serving
             prompt adapters.
         log_stats: Whether to log statistics.
         usage_context: Specified entry point, used for usage info collection.
@@ -496,6 +497,7 @@ class LLMEngine:
         request_id: str,
         processed_inputs: LLMInputs,
         params: Union[SamplingParams, PoolingParams],
+        global_scheduler_output: GlobalSchedulerOutput,
         arrival_time: float,
         lora_request: Optional[LoRARequest],
         prompt_adapter_request: Optional[PromptAdapterRequest],
@@ -515,6 +517,7 @@ class LLMEngine:
                 request_id,
                 seq,
                 params,
+                global_scheduler_output,
                 arrival_time=arrival_time,
                 lora_request=lora_request,
                 trace_headers=trace_headers,
@@ -578,6 +581,7 @@ class LLMEngine:
         request_id: str,
         inputs: PromptInputs,
         params: Union[SamplingParams, PoolingParams],
+        global_scheduler_output: GlobalSchedulerOutput,
         arrival_time: Optional[float] = None,
         lora_request: Optional[LoRARequest] = None,
         trace_headers: Optional[Dict[str, str]] = None,
@@ -641,6 +645,7 @@ class LLMEngine:
             request_id=request_id,
             processed_inputs=processed_inputs,
             params=params,
+            global_scheduler_output=global_scheduler_output,
             arrival_time=arrival_time,
             lora_request=lora_request,
             prompt_adapter_request=prompt_adapter_request,
@@ -652,6 +657,7 @@ class LLMEngine:
         request_id: str,
         seq: Sequence,
         sampling_params: SamplingParams,
+        global_scheduler_output: GlobalSchedulerOutput,
         arrival_time: float,
         lora_request: Optional[LoRARequest],
         trace_headers: Optional[Dict[str, str]] = None,
@@ -679,6 +685,7 @@ class LLMEngine:
             seqs=[seq],
             arrival_time=arrival_time,
             sampling_params=sampling_params,
+            global_scheduler_output=global_scheduler_output,
             lora_request=lora_request,
             trace_headers=trace_headers,
             prompt_adapter_request=prompt_adapter_request)
