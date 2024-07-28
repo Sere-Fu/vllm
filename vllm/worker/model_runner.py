@@ -23,6 +23,7 @@ except ImportError:
     FLASHINFER_WORKSPACE_BUFFER_SIZE = 0
 
 from vllm.attention import AttentionMetadata, get_attn_backend
+from vllm.attention.ops.paged_attn import PagedAttention
 from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
                          ModelConfig, MultiModalConfig, ParallelConfig,
                          PromptAdapterConfig, SchedulerConfig)
@@ -57,6 +58,7 @@ from vllm.worker.model_runner_base import (
     _init_sampling_metadata_from_tensor_dict)
 from vllm.distributed.parallel_state import get_kvcc
 from vllm import _custom_ops as ops
+import vllm.envs as envs
 
 
 if TYPE_CHECKING:
@@ -1350,16 +1352,27 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             def mkcb(i, k_buf, v_buf):
                 def cb():
                     # print(f'👹recv kv: shape={k_buf.shape}, k={id(k_buf)}, v={id(v_buf)}')
-                    key_cache = kv_caches[i][0]
-                    value_cache = kv_caches[i][1]
-                    ops.reshape_and_cache_flash(
-                        k_buf,
-                        v_buf,
-                        key_cache,
-                        value_cache,
-                        model_input.attn_metadata.slot_mapping.flatten(),
-                        self.kv_cache_dtype,
-                    )
+                    if envs.VLLM_ATTENTION_BACKEND == 'FLASH_ATTN':
+                        key_cache = kv_caches[i][0]
+                        value_cache = kv_caches[i][1]
+                        ops.reshape_and_cache_flash(
+                            k_buf,
+                            v_buf,
+                            key_cache,
+                            value_cache,
+                            model_input.attn_metadata.slot_mapping.flatten(),
+                            self.kv_cache_dtype,
+                        )
+                    else:
+                        key_cache, value_cache = PagedAttention.split_kv_cache(
+                            kv_caches[i],
+                            self.model_config.get_num_kv_heads(self.parallel_config),
+                            self.model_config.get_head_size())
+                        PagedAttention.write_to_paged_cache(k_buf, v_buf, key_cache,
+                                                            value_cache,
+                                                            model_input.attn_metadata.slot_mapping,
+                                                            self.kv_cache_dtype,
+                                                            1.0)
                 return cb
             # print(f'👹 starts to recv {self.model.config.num_hidden_layers*2} tensors')
             kvcc = get_kvcc()
@@ -1402,7 +1415,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
         logits = self.model.compute_logits(hidden_or_intermediate_states,
                                            model_input.sampling_metadata)
-        
+
         if model_input.drank is not None:
             kvcc = get_kvcc()
             # print(f'👹 {kvcc.next_id()}@{time.time()}: issue isend logits: shape={logits.shape}')
