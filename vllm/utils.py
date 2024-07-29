@@ -828,7 +828,7 @@ def _cuda_device_count_stateless(
 def cuda_device_count_stateless() -> int:
     """Get number of CUDA devices, caching based on the value of
     CUDA_VISIBLE_DEVICES at the time of call.
-    
+
     This should be used instead of torch.cuda.device_count()
     unless CUDA_VISIBLE_DEVICES has already been set to the desired
     value."""
@@ -943,3 +943,32 @@ class FlexibleArgumentParser(argparse.ArgumentParser):
                 processed_args.append(arg)
 
         return super().parse_args(processed_args, namespace)
+
+class SendKVCacheCoordinator:
+    def __init__(self, messager: MessagerWrapper):
+        self.messager = messager
+        self.wip = []
+
+    def submit(self, k, v, num_slots, slot_mapping, ith, event):
+        self.wip.append((k, v, num_slots, slot_mapping, ith, event))
+
+    def check(self):
+        for i, ( _, _, num_slots, slot_mapping, ith, event) in enumerate(self.wip):
+            if event.query():
+                if ith == 0:
+                    assert slot_mapping is not None
+                    self.messager.execute_method(
+                        "send_slot_mapping",
+                        slot_mapping=slot_mapping.cpu(),
+                    )
+                self.messager.execute_method(
+                    "send_kv",
+                    num_slots=num_slots,
+                    ith=ith,
+                )
+            else:
+                self.wip = self.wip[i:]
+                print(f"wip {len(self.wip)}, completed {i}", file=sys.stderr)
+                return
+        print(f"wip {0}, completed {len(self.wip)}", file=sys.stderr)
+        self.wip.clear()

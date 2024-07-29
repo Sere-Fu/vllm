@@ -4,7 +4,7 @@ from typing import List
 import torch
 
 from vllm.attention import get_attn_backend
-from vllm.config import CacheConfig, DeviceConfig, ModelConfig, ParallelConfig
+from vllm.config import CacheConfig, DeviceConfig, ModelConfig, ParallelConfig, SchedulerConfig
 from vllm.logger import init_logger
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, get_dtype_size,
                         is_pin_memory_available)
@@ -25,6 +25,7 @@ class CacheEngine:
         cache_config: CacheConfig,
         model_config: ModelConfig,
         parallel_config: ParallelConfig,
+        scheduler_config: SchedulerConfig,
         device_config: DeviceConfig,
     ) -> None:
         self.cache_config = cache_config
@@ -46,6 +47,9 @@ class CacheEngine:
         if self.num_cpu_blocks:
             self.num_cpu_blocks //= parallel_config.pipeline_parallel_size
 
+        self.num_gpu_buffer_slots = scheduler_config.max_num_batched_tokens
+        self.num_cpu_buffer_slots = scheduler_config.max_num_batched_tokens
+
         if cache_config.cache_dtype == "auto":
             self.dtype = model_config.dtype
         else:
@@ -66,6 +70,9 @@ class CacheEngine:
         self.gpu_cache = self._allocate_kv_cache(
             self.num_gpu_blocks, self.device_config.device_type)
         self.cpu_cache = self._allocate_kv_cache(self.num_cpu_blocks, "cpu")
+        self.gpu_buffer = self._allocate_kv_buffer(
+            self.num_gpu_buffers, self.device_config.device_type)
+        self.cpu_buffer = self._allocate_kv_buffer(self.num_cpu_buffers, "cpu")
 
     def _allocate_kv_cache(
         self,
@@ -83,6 +90,26 @@ class CacheEngine:
             # We zero-out everything for simplicity.
             kv_cache.append(
                 torch.zeros(kv_cache_shape,
+                            dtype=self.dtype,
+                            pin_memory=pin_memory,
+                            device=device))
+        return kv_cache
+
+    def _allocate_kv_buffer(
+        self,
+        num_blocks: int,
+        device: str,
+    ) -> List[torch.Tensor]:
+        """Allocates KV buffer on the specified device."""
+        kv_buffer_shape = (self.num_heads, self.head_size)
+        pin_memory = is_pin_memory_available() if device == "cpu" else False
+        kv_cache: List[torch.Tensor] = []
+        for _ in range(self.num_attention_layers):
+            # null block in CpuGpuBlockAllocator requires at least that
+            # block to be zeroed-out.
+            # We zero-out everything for simplicity.
+            kv_cache.append(
+                torch.zeros(kv_buffer_shape,
                             dtype=self.dtype,
                             pin_memory=pin_memory,
                             device=device))

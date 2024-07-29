@@ -2,6 +2,8 @@ import asyncio
 import multiprocessing
 import os
 import sys
+import torch
+import time
 import threading
 import traceback
 import uuid
@@ -9,11 +11,13 @@ from dataclasses import dataclass
 from multiprocessing import Queue
 from multiprocessing.connection import wait
 from multiprocessing.process import BaseProcess
-from typing import (Any, Callable, Dict, Generic, List, Optional, TextIO,
+from typing import (Any, Callable, Dict, Generic, List, Optional, TextIO, Tuple,
                     TypeVar, Union)
 
-import vllm.envs as envs
+from vllm.worker.messager import Messager
 from vllm.logger import init_logger
+
+KVCache = Tuple[torch.Tensor, torch.Tensor]
 
 logger = init_logger(__name__)
 
@@ -27,9 +31,8 @@ RESET = '\033[0;0m'
 
 JOIN_TIMEOUT_S = 2
 
-mp_method = envs.VLLM_WORKER_MULTIPROC_METHOD
+mp_method = "spawn"
 mp = multiprocessing.get_context(mp_method)
-
 
 @dataclass
 class Result(Generic[T]):
@@ -75,21 +78,28 @@ def _set_future_result(future: Union[ResultFuture, asyncio.Future],
 class ResultHandler(threading.Thread):
     """Handle results from all workers (in background thread)"""
 
-    def __init__(self) -> None:
+    def __init__(self, scheduler) -> None:
         super().__init__(daemon=True)
         self.result_queue = mp.Queue()
-        self.tasks: Dict[uuid.UUID, Union[ResultFuture, asyncio.Future]] = {}
+        self.scheduler = scheduler
 
     def run(self):
-        for result in iter(self.result_queue.get, _TERMINATE):
-            future = self.tasks.pop(result.task_id)
-            _set_future_result(future, result)
+        for _ in iter(self.result_queue.get, _TERMINATE):
+            if self.scheduler.without_kv:
+                self.scheduler.with_kv.extend(self.scheduler.without_kv.pop(0))
+                self.evt.set()
+            else:
+                self.scheduler.kv_ready += 1
+
         # Ensure that all waiters will receive an exception
         for task_id, future in self.tasks.items():
             _set_future_result(
                 future,
                 Result(task_id=task_id,
                        exception=ChildProcessError("worker died")))
+
+    def inject_event(self, evt):
+        self.evt = evt
 
     def close(self):
         self.result_queue.put(_TERMINATE)
@@ -140,41 +150,41 @@ class WorkerMonitor(threading.Thread):
         self.result_handler.close()
 
 
-class ProcessWorkerWrapper:
+class MessagerWrapper:
     """Local process wrapper for vllm.worker.Worker,
     for handling single-node multi-GPU tensor parallel."""
 
-    def __init__(self, result_handler: ResultHandler,
-                 worker_factory: Callable[[], Any]) -> None:
+    def __init__(self, role: str, num_layers: int, kv_shape: Tuple[int, int], result_handler: ResultHandler) -> None:
         self._task_queue = mp.Queue()
         self.result_queue = result_handler.result_queue
-        self.tasks = result_handler.tasks
         self.process: BaseProcess = mp.Process(  # type: ignore[attr-defined]
             target=_run_worker_process,
-            name="VllmWorkerProcess",
+            name="messager",
             kwargs=dict(
-                worker_factory=worker_factory,
                 task_queue=self._task_queue,
                 result_queue=self.result_queue,
+                role=role,
+                num_layers=num_layers,
+                kv_shape=kv_shape
             ),
             daemon=True)
 
         self.process.start()
 
-    def _enqueue_task(self, future: Union[ResultFuture, asyncio.Future],
-                      method: str, args, kwargs):
-        task_id = uuid.uuid4()
-        self.tasks[task_id] = future
+    def pass_cache(self, gpu_cache, cpu_cache, gpu_buffer, cpu_buffer: list[KVCache]):
         try:
-            self._task_queue.put((task_id, method, args, kwargs))
+            self._task_queue.put(gpu_cache)
+            self._task_queue.put(cpu_cache)
+            self._task_queue.put(gpu_buffer)
+            self._task_queue.put(cpu_buffer)
         except BaseException as e:
-            del self.tasks[task_id]
             raise ChildProcessError("worker died") from e
 
     def execute_method(self, method: str, *args, **kwargs):
-        future: ResultFuture = ResultFuture()
-        self._enqueue_task(future, method, args, kwargs)
-        return future
+        try:
+            self._task_queue.put((method, args, kwargs))
+        except BaseException as e:
+            raise ChildProcessError("worker died") from e
 
     async def execute_method_async(self, method: str, *args, **kwargs):
         future = asyncio.get_running_loop().create_future()
@@ -194,9 +204,11 @@ class ProcessWorkerWrapper:
 
 
 def _run_worker_process(
-    worker_factory: Callable[[], Any],
     task_queue: Queue,
     result_queue: Queue,
+    role: str,
+    num_layers: int,
+    kv_shape: Tuple[int, int],
 ) -> None:
     """Worker process event loop"""
 
@@ -206,36 +218,33 @@ def _run_worker_process(
     _add_prefix(sys.stdout, process_name, pid)
     _add_prefix(sys.stderr, process_name, pid)
 
+    gpu_cache = task_queue.get()
+    cpu_cache = task_queue.get()
+    gpu_buffer = task_queue.get()
+    cpu_buffer = task_queue.get()
     # Initialize worker
-    worker = worker_factory()
-    del worker_factory
+    messager = Messager(role, "tcp://127.0.0.1:7777", num_layers, kv_shape, result_queue, gpu_cache, cpu_cache, gpu_buffer, cpu_buffer)
 
     # Accept tasks from the engine in task_queue
     # and return task output in result_queue
-    logger.info("Worker ready; awaiting tasks")
+    logger.info(f"{role} ready; awaiting tasks")
     try:
         for items in iter(task_queue.get, _TERMINATE):
-            output = None
-            exception = None
-            task_id, method, args, kwargs = items
+            method, args, kwargs = items
             try:
-                executor = getattr(worker, method)
-                output = executor(*args, **kwargs)
+                executor = getattr(messager, method)
+                executor(*args, **kwargs)
             except BaseException as e:
                 tb = traceback.format_exc()
                 logger.error(
                     "Exception in worker %s while processing method %s: %s, %s",
                     process_name, method, e, tb)
-                exception = e
-            result_queue.put(
-                Result(task_id=task_id, value=output, exception=exception))
     except KeyboardInterrupt:
         pass
     except Exception:
         logger.exception("Worker failed")
 
     logger.info("Worker exiting")
-
 
 def _add_prefix(file: TextIO, worker_name: str, pid: int) -> None:
     """Prepend each output line with process-specific prefix"""
