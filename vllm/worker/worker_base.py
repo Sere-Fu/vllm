@@ -223,7 +223,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             with torch.inference_mode():
                 get_kvcc().complete_io_and_dispatch_pending()
             return
-            
+
         if self.is_driver_worker:
             if execute_model_req is None:
                 if self.do_metadata_broadcast:
@@ -274,12 +274,12 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             intermediate_tensors = IntermediateTensors(
                 get_pp_group().recv_tensor_dict())
 
-        if any(sgm.sampling_params.dendpoint or sgm.sampling_params.prank is not None\
+        if any(sgm.global_scheduler_output.compute.policy == 'split'
                for sgm in execute_model_req.seq_group_metadata_list):
             if execute_model_req.seq_group_metadata_list[0].is_prompt:
                 assert len(execute_model_req.seq_group_metadata_list) == 1
                 sampling_params = execute_model_req.seq_group_metadata_list[0].sampling_params
-                if sampling_params.dendpoint: # P
+                if not sampling_params.prank: # P
                     model_input.drank = 1 # FIXME: determine drank by endpoint
                 else: # T
                     model_input.prank = sampling_params.prank

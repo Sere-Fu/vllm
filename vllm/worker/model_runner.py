@@ -909,6 +909,7 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                 is_prompt=True,
                 seq_data={group_id: seq_data},
                 sampling_params=sampling_params,
+                global_scheduler_output=None,
                 block_tables=None,
                 lora_request=dummy_lora_requests_per_seq[group_id]
                 if dummy_lora_requests_per_seq else None,

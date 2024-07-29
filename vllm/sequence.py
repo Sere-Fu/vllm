@@ -660,6 +660,7 @@ class SequenceGroupMetadata:
         is_prompt: bool,
         seq_data: Dict[int, SequenceData],
         sampling_params: SamplingParams,
+        global_scheduler_output: GlobalSchedulerOutput,
         block_tables: Dict[int, List[int]],
         do_sample: bool = True,
         pooling_params: Optional[PoolingParams] = None,
@@ -676,6 +677,7 @@ class SequenceGroupMetadata:
         self.is_prompt = is_prompt
         self.seq_data = seq_data
         self.sampling_params = sampling_params
+        self.global_scheduler_output = global_scheduler_output
         self.block_tables = block_tables
         self.pooling_params = pooling_params
         self.lora_request = lora_request

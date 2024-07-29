@@ -417,7 +417,7 @@ class Scheduler:
                 chunked number of tokens are scheduled  if
                 `budget.num_batched_tokens` has not enough capacity to schedule
                 all tokens.
-    
+
         Returns:
             A tuple of remaining running queue (should be always 0) after
             scheduling and SchedulerRunningOutputs.
@@ -680,8 +680,7 @@ class Scheduler:
 
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
         while self._passed_delay(time.time()) and waiting_queue:
-            if seq_groups and (seq_groups[0].seq_group.sampling_params.dendpoint or\
-                seq_groups[0].seq_group.sampling_params.prank is not None):
+            if seq_groups and seq_groups[0].seq_group.global_scheduler_output.compute.policy == 'split':
                 break
             seq_group = waiting_queue[0]
 
@@ -765,7 +764,7 @@ class Scheduler:
 
     def _schedule_default(self) -> SchedulerOutputs:
         """Schedule queued requests.
-        
+
         The current policy is designed to optimize the throughput. First,
         it batches as many prefill requests as possible. And it schedules
         decodes. If there's a pressure on GPU memory, decode requests can
@@ -825,8 +824,7 @@ class Scheduler:
         self.waiting.extendleft(running_scheduled.preempted)
         # Update new running requests.
         self.running = remaining_running
-        if any(s.seq_group.sampling_params.prank is not None or\
-                s.seq_group.sampling_params.dendpoint is not None \
+        if any(s.seq_group.global_scheduler_output.compute.policy == 'split'
                     for s in prefills.seq_groups):
             assert len(prefills.seq_groups) == 1
             # print('🎃not put to running, will schedule it later')
@@ -865,7 +863,7 @@ class Scheduler:
 
     def _schedule_chunked_prefill(self):
         """Schedule queued requests.
-        
+
         Chunked prefill allows to chunk prefill requests, batch them together
         with decode requests. This policy 1. schedule as many decoding requests
         as possible. 2. schedule chunked prefill requests that are not
@@ -1031,6 +1029,7 @@ class Scheduler:
                 is_prompt=is_prompt,
                 seq_data=seq_data,
                 sampling_params=seq_group.sampling_params,
+                global_scheduler_output=seq_group.global_scheduler_output,
                 block_tables=block_tables,
                 do_sample=do_sample,
                 pooling_params=seq_group.pooling_params,
