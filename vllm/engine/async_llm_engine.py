@@ -25,6 +25,7 @@ from vllm.sequence import ExecuteModelRequest, SamplerOutput
 from vllm.usage.usage_lib import UsageContext
 from vllm.distributed.parallel_state import get_kvcc
 from vllm.entrypoints.openai.protocol import GlobalSchedulerOutput
+from vllm.utils import get_ip
 
 logger = init_logger(__name__)
 ENGINE_ITERATION_TIMEOUT_S = envs.VLLM_ENGINE_ITERATION_TIMEOUT_S
@@ -235,13 +236,13 @@ class _AsyncLLMEngine(LLMEngine):
             output_future = None
             is_split_P = False
             # Execute the model.
-            if any(ssg.seq_group.sampling_params.dendpoint or ssg.seq_group.sampling_params.prank is not None\
+            if any(ssg.seq_group.global_scheduler_output.compute.policy == 'split'
                     for ssg in scheduler_outputs.scheduled_seq_groups):
                 seq_group = scheduler_outputs.scheduled_seq_groups[0].seq_group
                 meta = seq_group_metadata_list[0]
                 if meta.is_prompt:
                     assert len(scheduler_outputs.scheduled_seq_groups) == 1
-                    if seq_group.sampling_params.dendpoint: #P
+                    if get_ip() == seq_group.global_scheduler_output.compute.prompt_worker_address: #P
                         is_split_P = True
                         import torch.distributed as dist
                         import aiohttp
@@ -252,10 +253,13 @@ class _AsyncLLMEngine(LLMEngine):
                                 'max_tokens': seq_group.sampling_params.max_tokens,
                                 'temperature': seq_group.sampling_params.temperature,
                                 'stream': seq_group.sampling_params.stream,
+                                'global_scheduler_output': seq_group.global_scheduler_output.dict(),
                                 'prank': dist.get_rank(),
                             }
                             async with aiohttp.ClientSession() as session:
-                                async with session.post(seq_group.sampling_params.dendpoint, json=data) as response:
+                                async with session.post(
+                                    'http://' + seq_group.global_scheduler_output.compute.decoding_worker_address +
+                                    ":8001/v1/completions", json=data) as response:
                                     async for chunk in response.content.iter_any():
                                         _request_tracker.process_request_output(RequestOutput(seq_group.request_id, None, None, None, None, None, override_bytes=chunk))
                             _request_tracker.abort_request(seq_group.request_id)
