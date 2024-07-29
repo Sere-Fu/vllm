@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     VLLM_PORT: Optional[int] = None
     VLLM_WORLD: int = 1
     VLLM_RANK: int = 0
+    VLLM_MASTER_ADDRESS: str = ""
     VLLM_USE_MODELSCOPE: bool = False
     VLLM_RINGBUFFER_WARNING_INTERVAL: int = 60
     VLLM_INSTANCE_ID: Optional[str] = None
@@ -102,6 +103,10 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     # used in distributed environment to determine the master address
     'VLLM_HOST_IP':
     lambda: os.getenv('VLLM_HOST_IP', "") or os.getenv("HOST_IP", ""),
+
+    'VLLM_MASTER_ADDRESS':
+    lambda: os.getenv('VLLM_MASTER_ADDRESS', '')
+    if 'VLLM_MASTER_ADDRESS' in os.environ else None,
 
     # used in distributed environment to manually set the communication port
     # Note: if VLLM_PORT is set, and some code asks for multiple ports, the
