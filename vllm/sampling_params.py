@@ -134,6 +134,10 @@ class SamplingParams:
         spaces_between_special_tokens: bool = True,
         logits_processors: Optional[List[LogitsProcessor]] = None,
         truncate_prompt_tokens: Optional[Annotated[int, Field(ge=1)]] = None,
+        dendpoint: Optional[str] = None,
+        prank: Optional[int] = None,
+        stream: Optional[bool] = None,
+
     ) -> None:
         self.n = n
         self.best_of = best_of if best_of is not None else n
@@ -195,6 +199,9 @@ class SamplingParams:
                 self._verify_greedy_sampling()
         # eos_token_id is added to this by the engine
         self.all_stop_token_ids = set(self.stop_token_ids)
+        self.dendpoint = dendpoint
+        self.prank = prank
+        self.stream = stream
 
     def _verify_args(self) -> None:
         if self.n < 1:
@@ -355,4 +362,6 @@ class SamplingParams:
             f"skip_special_tokens={self.skip_special_tokens}, "
             "spaces_between_special_tokens="
             f"{self.spaces_between_special_tokens}, "
+            f"dendpoint={self.dendpoint}, "
+            f"prank={self.prank}, "
             f"truncate_prompt_tokens={self.truncate_prompt_tokens})")

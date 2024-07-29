@@ -193,6 +193,8 @@ class OpenAIServingCompletion(OpenAIServing):
                     await self.engine.abort(f"{request_id}-{i}")
                     return self.create_error_response("Client disconnected")
                 final_res_batch[i] = res
+            if request.dendpoint:
+                return final_res_batch[0].override_bytes
             response = self.request_output_to_completion_response(
                 final_res_batch, request, request_id, created_time, model_name)
         except ValueError as e:
@@ -227,6 +229,7 @@ class OpenAIServingCompletion(OpenAIServing):
         previous_num_tokens = [0] * request.n * num_prompts
         has_echoed = [False] * request.n * num_prompts
 
+        is_proxy = False
         try:
             async for prompt_idx, res in result_generator:
 
@@ -234,6 +237,11 @@ class OpenAIServingCompletion(OpenAIServing):
                 if await raw_request.is_disconnected():
                     await self.engine.abort(f"{request_id}-{prompt_idx}")
                     raise StopAsyncIteration()
+
+                if res.override_bytes:
+                    is_proxy = True
+                    yield res.override_bytes
+                    continue
 
                 for output in res.outputs:
                     i = output.index + prompt_idx * request.n
@@ -330,7 +338,8 @@ class OpenAIServingCompletion(OpenAIServing):
             # TODO: Use a vllm-specific Validation Error
             data = self.create_streaming_error_response(str(e))
             yield f"data: {data}\n\n"
-        yield "data: [DONE]\n\n"
+        if not is_proxy:
+            yield "data: [DONE]\n\n"
 
     def request_output_to_completion_response(
         self,

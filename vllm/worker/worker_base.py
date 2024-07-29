@@ -14,6 +14,7 @@ from vllm.sequence import (ExecuteModelRequest, IntermediateTensors,
 from vllm.utils import (enable_trace_function_call_for_thread, is_hip,
                         update_environment_variables)
 from vllm.worker.model_runner_base import ModelRunnerBase, ModelRunnerInputBase
+from vllm.distributed.parallel_state import get_kvcc
 
 logger = init_logger(__name__)
 
@@ -218,6 +219,11 @@ class LocalOrDistributedWorkerBase(WorkerBase):
     ) -> Optional[List[SamplerOutput]]:
         """Executes at least one model step on the given sequences, unless no
         sequences are provided."""
+        if execute_model_req.run_kvcc_only:
+            with torch.inference_mode():
+                get_kvcc().complete_io_and_dispatch_pending()
+            return
+            
         if self.is_driver_worker:
             if execute_model_req is None:
                 if self.do_metadata_broadcast:
@@ -267,6 +273,17 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         if not get_pp_group().is_first_rank:
             intermediate_tensors = IntermediateTensors(
                 get_pp_group().recv_tensor_dict())
+
+        if any(sgm.sampling_params.dendpoint or sgm.sampling_params.prank is not None\
+               for sgm in execute_model_req.seq_group_metadata_list):
+            if execute_model_req.seq_group_metadata_list[0].is_prompt:
+                assert len(execute_model_req.seq_group_metadata_list) == 1
+                sampling_params = execute_model_req.seq_group_metadata_list[0].sampling_params
+                if sampling_params.dendpoint: # P
+                    model_input.drank = 1 # FIXME: determine drank by endpoint
+                else: # T
+                    model_input.prank = sampling_params.prank
+                    model_input.output_future = execute_model_req.output_future
 
         output = self.model_runner.execute_model(
             model_input, self.kv_cache[worker_input.virtual_engine]

@@ -55,6 +55,9 @@ from vllm.worker.model_runner_base import (
     _add_sampling_metadata_broadcastable_dict,
     _init_attn_metadata_from_tensor_dict,
     _init_sampling_metadata_from_tensor_dict)
+from vllm.distributed.parallel_state import get_kvcc
+from vllm import _custom_ops as ops
+
 
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
@@ -74,7 +77,7 @@ _NUM_WARMUP_ITERS = 2
 TModelInputForGPU = TypeVar('TModelInputForGPU', bound="ModelInputForGPU")
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=False)
 class ModelInputForGPU(ModelRunnerInputBase):
     """
     This base class contains metadata needed for the base model forward pass
@@ -95,6 +98,9 @@ class ModelInputForGPU(ModelRunnerInputBase):
     request_ids_to_seq_ids: Optional[Dict[str, List[int]]] = None
     finished_requests_ids: Optional[List[str]] = None
     virtual_engine: int = 0
+    prank: Optional[int] = None
+    drank: Optional[int] = None
+    output_future = None
 
     def as_broadcastable_tensor_dict(self) -> Dict[str, Any]:
         tensor_dict = {
@@ -124,7 +130,7 @@ class ModelInputForGPU(ModelRunnerInputBase):
         return cls(**tensor_dict)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=False)
 class ModelInputForGPUWithSamplingMetadata(ModelInputForGPU):
     """
     Used by the ModelRunner.
@@ -1338,14 +1344,57 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             "finished_requests_ids": model_input.finished_requests_ids,
             "request_ids_to_seq_ids": model_input.request_ids_to_seq_ids,
         } if self.has_seqlen_agnostic else {}
-        hidden_or_intermediate_states = model_executable(
-            input_ids=model_input.input_tokens,
-            positions=model_input.input_positions,
-            kv_caches=kv_caches,
-            attn_metadata=model_input.attn_metadata,
-            intermediate_tensors=intermediate_tensors,
-            **multi_modal_kwargs,
-            **seqlen_agnostic_kwargs)
+
+        assert not model_input.prank or not model_input.drank
+        if model_input.attn_metadata.prefill_metadata is not None and model_input.prank is not None:
+            def mkcb(i, k_buf, v_buf):
+                def cb():
+                    # print(f'👹recv kv: shape={k_buf.shape}, k={id(k_buf)}, v={id(v_buf)}')
+                    key_cache = kv_caches[i][0]
+                    value_cache = kv_caches[i][1]
+                    ops.reshape_and_cache_flash(
+                        k_buf,
+                        v_buf,
+                        key_cache,
+                        value_cache,
+                        model_input.attn_metadata.slot_mapping.flatten(),
+                        self.kv_cache_dtype,
+                    )
+                return cb
+            # print(f'👹 starts to recv {self.model.config.num_hidden_layers*2} tensors')
+            kvcc = get_kvcc()
+            for i in range(self.model.config.num_hidden_layers):
+                kv_heads = self.model.config.num_key_value_heads if hasattr(self.model.config, 'num_key_value_heads') else self.model.config.num_attention_heads
+                shape = (model_input.input_tokens.shape[0], kv_heads, self.model.config.hidden_size//self.model.config.num_attention_heads)
+                k_buf = torch.empty(shape, dtype=self.model_config.dtype, device=self.device)
+                v_buf = torch.empty(shape, dtype=self.model_config.dtype, device=self.device)
+                kvcc.irecv(k_buf, src=model_input.prank)
+                kvcc.irecv(v_buf, src=model_input.prank, cb=mkcb(i, k_buf, v_buf))
+            logits_buf = torch.empty((1, self.vocab_size), dtype=self.model_config.dtype, device=self.device)
+            assert model_input.output_future is not None
+            ioid = kvcc.next_id()
+            # print(f'👹 {ioid}@{time.time()}: issue irecv')
+            def cb():
+                # print(f'👹 {ioid}@{time.time()}: finsh irecv logits: shape={logits_buf.shape}. let\'s go continue')
+                output: SamplerOutput = self.model.sample(
+                    logits=logits_buf,
+                    sampling_metadata=model_input.sampling_metadata,
+                )
+                model_input.output_future.set_result([output])
+            kvcc.irecv(logits_buf, src=model_input.prank, cb=cb)
+            kvcc.complete_io_and_dispatch_pending()
+            return []
+        else:
+            model_input.attn_metadata.drank = model_input.drank
+            hidden_or_intermediate_states = model_executable(
+                input_ids=model_input.input_tokens,
+                positions=model_input.input_positions,
+                kv_caches=kv_caches,
+                attn_metadata=model_input.attn_metadata,
+                intermediate_tensors=intermediate_tensors,
+                **multi_modal_kwargs,
+                **seqlen_agnostic_kwargs)
+            get_kvcc().complete_io_and_dispatch_pending()
 
         # Compute the logits in the last pipeline stage.
         if not get_pp_group().is_last_rank:
@@ -1353,6 +1402,12 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
         logits = self.model.compute_logits(hidden_or_intermediate_states,
                                            model_input.sampling_metadata)
+        
+        if model_input.drank is not None:
+            kvcc = get_kvcc()
+            # print(f'👹 {kvcc.next_id()}@{time.time()}: issue isend logits: shape={logits.shape}')
+            kvcc.isend(logits, dst=model_input.drank)
+            return []
 
         if not self.is_driver_worker:
             return []

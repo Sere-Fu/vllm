@@ -8,6 +8,8 @@ from vllm_flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from vllm import _custom_ops as ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
+import torch.distributed as dist
+from vllm.distributed.parallel_state import get_kvcc
 
 
 class FlashAttentionBackend(AttentionBackend):
@@ -121,6 +123,8 @@ class FlashAttentionMetadata(AttentionMetadata):
 
     _cached_prefill_metadata: Optional["FlashAttentionMetadata"] = None
     _cached_decode_metadata: Optional["FlashAttentionMetadata"] = None
+
+    drank: Optional[int] = None
 
     @property
     def prefill_metadata(self) -> Optional["FlashAttentionMetadata"]:
@@ -284,6 +288,12 @@ class FlashAttentionImpl(AttentionImpl):
         query = query.view(-1, self.num_heads, self.head_size)
         key = key.view(-1, self.num_kv_heads, self.head_size)
         value = value.view(-1, self.num_kv_heads, self.head_size)
+
+        if attn_metadata.drank is not None:
+            kvcc = get_kvcc()
+            # print(f'👹isend: kv shape={key.shape}')
+            kvcc.isend(key.contiguous(), attn_metadata.drank)
+            kvcc.isend(value.contiguous(), attn_metadata.drank)
 
         if kv_cache is not None:
             key_cache = kv_cache[0]
