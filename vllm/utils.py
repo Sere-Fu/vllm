@@ -360,7 +360,8 @@ def get_rank():
 def get_distributed_init_method(ip: str, port: int) -> str:
     # Brackets are not permitted in ipv4 addresses,
     # see https://github.com/python/cpython/issues/103848
-    return f"tcp://[{ip}]:{port}" if ":" in ip else f"tcp://{ip}:{port}"
+    master_address = envs.VLLM_MASTER_ADDRESS
+    return f"tcp://[{ip}]:{port}" if ":" in ip else f"tcp://{master_address if master_address else ip}:{port}"
 
 
 def get_open_port() -> int:
@@ -831,7 +832,7 @@ def _cuda_device_count_stateless(
 def cuda_device_count_stateless() -> int:
     """Get number of CUDA devices, caching based on the value of
     CUDA_VISIBLE_DEVICES at the time of call.
-    
+
     This should be used instead of torch.cuda.device_count()
     unless CUDA_VISIBLE_DEVICES has already been set to the desired
     value."""
