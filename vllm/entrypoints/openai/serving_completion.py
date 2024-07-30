@@ -104,6 +104,9 @@ class OpenAIServingCompletion(OpenAIServing):
         generators: List[AsyncIterator[RequestOutput]] = []
         try:
             sampling_params = request.to_sampling_params()
+            if request.global_scheduler_output and request.global_scheduler_output.compute and request.global_scheduler_output.compute.policy == 'split':
+                sampling_params.dendpoint = f'http://{request.global_scheduler_output.compute.decoding_worker_address}:8001/v1/completions'
+
             adapter_type, adapter_request = self._maybe_get_adapter(request)
             lora_request, prompt_adapter_request = None, None
             if adapter_type == 'LoRA':
