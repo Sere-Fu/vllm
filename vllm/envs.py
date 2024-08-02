@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 if TYPE_CHECKING:
     VLLM_HOST_IP: str = ""
+    VLLM_SERVE_PORT: str = ""
     VLLM_PORT: Optional[int] = None
     VLLM_WORLD: int = 1
     VLLM_RANK: int = 0
@@ -103,6 +104,9 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     # used in distributed environment to determine the master address
     'VLLM_HOST_IP':
     lambda: os.getenv('VLLM_HOST_IP', "") or os.getenv("HOST_IP", ""),
+
+    'VLLM_SERVE_PORT':
+    lambda: os.getenv('VLLM_SERVE_PORT', ""),
 
     'VLLM_MASTER_ADDRESS':
     lambda: os.getenv('VLLM_MASTER_ADDRESS', '')

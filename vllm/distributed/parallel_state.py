@@ -7,7 +7,7 @@ It takes over the control of the distributed environment from PyTorch.
 The typical workflow is:
 
 - call `init_distributed_environment` to initialize the distributed environment.
-- call `initialize_model_parallel` or `ensure_model_parallel_initialized` to 
+- call `initialize_model_parallel` or `ensure_model_parallel_initialized` to
  initialize the model parallel groups.
 
 - any code dealing with the distributed stuff
@@ -33,6 +33,7 @@ import torch.distributed
 from torch.distributed import Backend, ProcessGroup
 
 import vllm.envs as envs
+from vllm.utils import get_ip
 from vllm.logger import init_logger
 
 
@@ -273,7 +274,7 @@ class GroupCoordinator:
 
     def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
         """
-        NOTE: This operation will be applied in-place or out-of-place. 
+        NOTE: This operation will be applied in-place or out-of-place.
         Always assume this function modifies its input, but use the return
         value as the output.
         """
@@ -856,6 +857,20 @@ class KVCacheCoordinator:
         self.last_time = time.perf_counter()
         self.n_completed = 0
         self.n_issue = 0
+        self.init_phonebook()
+
+    def init_phonebook(self):
+        world_size = dist.get_world_size()
+        if world_size == 1:
+            return
+        result_list = [None] * world_size
+        serve_port = envs.VLLM_SERVE_PORT
+        assert serve_port is not None, "please set VLLM_SERVE_PORT when split"
+        dist.all_gather_object(result_list, (get_ip() + f':{serve_port}', dist.get_rank()))
+        self.phonebook = {ip: rank for ip, rank in result_list}
+
+    def get_rank_by_address(self, ip):
+        return self.phonebook.get(ip)
 
     def _invoke(self, buf, op, cb):
         if len(self.pending) >= KVCacheCoordinator.MAX_WIP * 4:
@@ -907,10 +922,10 @@ class KVCacheCoordinator:
         #     print(f'👾completed={nwip-len(self.wip)}, wip={len(self.wip)}, pending={len(self.pending)}, '
         #           f'interval={elapsed*1000:.3f}ms, bandwidth={nbytes/elapsed/1024**3:.3f}GB/s, '
         #           f'accumaleted_issue={self.n_issue}, accumaleted_complete={self.n_completed}')
-    
+
     def has_running_io(self):
         return len(self.wip) > 0 or len(self.pending) > 0
-    
+
     def next_id(self):
         return self.n_issue + len(self.pending)
 

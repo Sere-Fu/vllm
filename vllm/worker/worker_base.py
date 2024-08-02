@@ -223,7 +223,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             with torch.inference_mode():
                 get_kvcc().complete_io_and_dispatch_pending()
             return
-            
+
         if self.is_driver_worker:
             if execute_model_req is None:
                 if self.do_metadata_broadcast:
@@ -280,7 +280,8 @@ class LocalOrDistributedWorkerBase(WorkerBase):
                 assert len(execute_model_req.seq_group_metadata_list) == 1
                 sampling_params = execute_model_req.seq_group_metadata_list[0].sampling_params
                 if sampling_params.dendpoint: # P
-                    model_input.drank = 1 # FIXME: determine drank by endpoint
+                    dip = sampling_params.dendpoint.strip('http://').split('/')[0]
+                    model_input.drank = get_kvcc().get_rank_by_address(dip)
                 else: # T
                     model_input.prank = sampling_params.prank
                     model_input.output_future = execute_model_req.output_future
