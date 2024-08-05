@@ -214,7 +214,7 @@ class _AsyncLLMEngine(LLMEngine):
     """Extension of LLMEngine to add async methods."""
 
     async def step_async(
-        self, virtual_engine: int, _request_tracker
+        self, virtual_engine: int, out_continuation: Callable[[List[Union[RequestOutput, EmbeddingRequestOutput]]], bool]
     ) -> List[Union[RequestOutput, EmbeddingRequestOutput]]:
         """Performs one decoding iteration and returns newly generated results.
         The workers are ran asynchronously if possible.
@@ -265,9 +265,8 @@ class _AsyncLLMEngine(LLMEngine):
                                 scheduler_outputs.ignored_seq_groups, seq_group_metadata_list)
                             self.do_log_stats(scheduler_outputs, output)
                             self.do_tracing(scheduler_outputs)
-                            for request_output in request_outputs:
-                                _request_tracker.process_request_output(request_output)
                             self.scheduler[virtual_engine].running.append(seq_group)
+                            out_continuation(request_outputs)
                         asyncio.create_task(continuation())
                     else:
                         assert seq_group.sampling_params.drank is not None
@@ -594,17 +593,20 @@ class AsyncLLMEngine:
         if finished_requests:
             await self._engine_abort(finished_requests)
 
+
+        def continuation(request_outputs):
+            # Put the outputs into the corresponding streams.
+            for request_output in request_outputs:
+                self._request_tracker.process_request_output(
+                    request_output, verbose=self.log_requests)
+            return len(request_outputs) > 0
+        
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()  # type: ignore
         else:
-            request_outputs = await self.engine.step_async(virtual_engine, self._request_tracker)
-
-        # Put the outputs into the corresponding streams.
-        for request_output in request_outputs:
-            self._request_tracker.process_request_output(
-                request_output, verbose=self.log_requests)
-
-        return len(request_outputs) > 0
+            request_outputs = await self.engine.step_async(virtual_engine, continuation)
+        
+        return continuation(request_outputs)
 
     async def _engine_abort(self, request_ids: Iterable[str]):
         if self.engine_use_ray:
