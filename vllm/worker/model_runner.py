@@ -1407,7 +1407,6 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             kvcc = get_kvcc()
             # print(f'👹 {kvcc.next_id()}@{time.time()}: issue isend logits: shape={logits.shape}')
             kvcc.isend(logits, dst=model_input.drank)
-            return []
 
         if not self.is_driver_worker:
             return []

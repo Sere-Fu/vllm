@@ -88,7 +88,6 @@ class RequestOutput:
         finished: bool,
         metrics: Optional[RequestMetrics] = None,
         lora_request: Optional[LoRARequest] = None,
-        override_bytes: bytes = None
     ) -> None:
         self.request_id = request_id
         self.prompt = prompt
@@ -98,7 +97,6 @@ class RequestOutput:
         self.finished = finished
         self.metrics = metrics
         self.lora_request = lora_request
-        self.override_bytes = override_bytes
 
     @classmethod
     def from_seq_group(cls, seq_group: SequenceGroup) -> "RequestOutput":

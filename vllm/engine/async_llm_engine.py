@@ -232,7 +232,6 @@ class _AsyncLLMEngine(LLMEngine):
 
         if not scheduler_outputs.is_empty():
             output_future = None
-            is_split_P = False
             # Execute the model.
             if any(ssg.seq_group.sampling_params.pendpoint or ssg.seq_group.sampling_params.drank is not None\
                     for ssg in scheduler_outputs.scheduled_seq_groups):
@@ -256,8 +255,6 @@ class _AsyncLLMEngine(LLMEngine):
                                 async with session.post(seq_group.sampling_params.pendpoint, json=data) as response:
                                     async for chunk in response.content.iter_any():
                                         pass
-                            #             _request_tracker.process_request_output(RequestOutput(seq_group.request_id, None, None, None, None, None, override_bytes=chunk))
-                            # _request_tracker.abort_request(seq_group.request_id)
                         asyncio.create_task(notify_pendpoint())
                         output_future = asyncio.get_event_loop().create_future()
                         async def continuation():
@@ -274,7 +271,6 @@ class _AsyncLLMEngine(LLMEngine):
                         asyncio.create_task(continuation())
                     else:
                         assert seq_group.sampling_params.drank is not None
-                        is_split_P = True
 
             execute_model_req = ExecuteModelRequest(
                 seq_group_metadata_list=seq_group_metadata_list,
@@ -288,13 +284,7 @@ class _AsyncLLMEngine(LLMEngine):
                 output_future=output_future)
             output = await self.model_executor.execute_model_async(
                 execute_model_req)
-            if not output:
-                if is_split_P: # ad hoc: seqs is freed in _process_model_outputs
-                    for sg in scheduler_outputs.scheduled_seq_groups:
-                        for s in sg.seq_group.seqs_dict.values():
-                            for scheduler in self.scheduler:
-                                scheduler.free_seq(s)
-                return []
+            if not output: return []
         else:
             if get_kvcc().has_running_io():
                 run_kvcc_req = ExecuteModelRequest(seq_group_metadata_list=None, run_kvcc_only=True)

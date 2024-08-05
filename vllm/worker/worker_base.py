@@ -280,7 +280,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
                 assert len(execute_model_req.seq_group_metadata_list) == 1
                 sampling_params = execute_model_req.seq_group_metadata_list[0].sampling_params
                 if sampling_params.pendpoint: # T
-                    model_input.prank = 0 # FIXME: determine drank by endpoint
+                    model_input.prank = 0 # FIXME: determine prank by endpoint
                     model_input.output_future = execute_model_req.output_future
                 else: # P
                     model_input.drank = sampling_params.drank
