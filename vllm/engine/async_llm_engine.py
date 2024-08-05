@@ -245,7 +245,7 @@ class _AsyncLLMEngine(LLMEngine):
                         async def notify_pendpoint():
                             data = {
                                 'model': self.model_executor.model_config.model,
-                                'prompt': seq_group.prompt,
+                                'prompt': next(iter(seq_group.seqs_dict.values())).inputs['prompt_token_ids'],
                                 'max_tokens': 1,
                                 'temperature': seq_group.sampling_params.temperature,
                                 'stream': seq_group.sampling_params.stream,
