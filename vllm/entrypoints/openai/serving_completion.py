@@ -193,7 +193,7 @@ class OpenAIServingCompletion(OpenAIServing):
                     await self.engine.abort(f"{request_id}-{i}")
                     return self.create_error_response("Client disconnected")
                 final_res_batch[i] = res
-            if request.dendpoint:
+            if request.pendpoint:
                 return final_res_batch[0].override_bytes
             response = self.request_output_to_completion_response(
                 final_res_batch, request, request_id, created_time, model_name)

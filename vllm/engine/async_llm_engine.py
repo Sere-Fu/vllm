@@ -234,33 +234,31 @@ class _AsyncLLMEngine(LLMEngine):
             output_future = None
             is_split_P = False
             # Execute the model.
-            if any(ssg.seq_group.sampling_params.dendpoint or ssg.seq_group.sampling_params.prank is not None\
+            if any(ssg.seq_group.sampling_params.pendpoint or ssg.seq_group.sampling_params.drank is not None\
                     for ssg in scheduler_outputs.scheduled_seq_groups):
                 seq_group = scheduler_outputs.scheduled_seq_groups[0].seq_group
                 meta = seq_group_metadata_list[0]
                 if meta.is_prompt:
                     assert len(scheduler_outputs.scheduled_seq_groups) == 1
-                    if seq_group.sampling_params.dendpoint: #P
-                        is_split_P = True
+                    if seq_group.sampling_params.pendpoint: #T
                         import torch.distributed as dist
                         import aiohttp
-                        async def notify_dendpoint():
+                        async def notify_pendpoint():
                             data = {
                                 'model': self.model_executor.model_config.model,
                                 'prompt': seq_group.prompt,
-                                'max_tokens': seq_group.sampling_params.max_tokens,
+                                'max_tokens': 1,
                                 'temperature': seq_group.sampling_params.temperature,
                                 'stream': seq_group.sampling_params.stream,
-                                'prank': dist.get_rank(),
+                                'drank': dist.get_rank(),
                             }
                             async with aiohttp.ClientSession() as session:
-                                async with session.post(seq_group.sampling_params.dendpoint, json=data) as response:
+                                async with session.post(seq_group.sampling_params.pendpoint, json=data) as response:
                                     async for chunk in response.content.iter_any():
-                                        _request_tracker.process_request_output(RequestOutput(seq_group.request_id, None, None, None, None, None, override_bytes=chunk))
-                            _request_tracker.abort_request(seq_group.request_id)
-                        asyncio.create_task(notify_dendpoint())
-                    else: # T
-                        assert seq_group.sampling_params.prank is not None
+                                        pass
+                            #             _request_tracker.process_request_output(RequestOutput(seq_group.request_id, None, None, None, None, None, override_bytes=chunk))
+                            # _request_tracker.abort_request(seq_group.request_id)
+                        asyncio.create_task(notify_pendpoint())
                         output_future = asyncio.get_event_loop().create_future()
                         async def continuation():
                             await output_future
@@ -274,6 +272,9 @@ class _AsyncLLMEngine(LLMEngine):
                                 _request_tracker.process_request_output(request_output)
                             self.scheduler[virtual_engine].running.append(seq_group)
                         asyncio.create_task(continuation())
+                    else:
+                        assert seq_group.sampling_params.drank is not None
+                        is_split_P = True
 
             execute_model_req = ExecuteModelRequest(
                 seq_group_metadata_list=seq_group_metadata_list,

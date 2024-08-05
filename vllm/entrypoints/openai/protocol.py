@@ -440,9 +440,8 @@ class CompletionRequest(OpenAIBaseModel):
         description=(
             "If specified, will override the default whitespace pattern "
             "for guided json decoding."))
-    dendpoint: Optional[str] = None
-    prank: Optional[int] = None
-
+    pendpoint: Optional[str] = None
+    drank: Optional[int] = None
     # doc: end-completion-extra-params
 
     def to_sampling_params(self):
@@ -496,8 +495,8 @@ class CompletionRequest(OpenAIBaseModel):
             length_penalty=self.length_penalty,
             logits_processors=logits_processors,
             truncate_prompt_tokens=self.truncate_prompt_tokens,
-            dendpoint=self.dendpoint,
-            prank=self.prank,
+            pendpoint=self.pendpoint,
+            drank=self.drank,
             stream=self.stream,
         )
 

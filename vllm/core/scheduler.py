@@ -680,8 +680,8 @@ class Scheduler:
 
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
         while self._passed_delay(time.time()) and waiting_queue:
-            if seq_groups and (seq_groups[0].seq_group.sampling_params.dendpoint or\
-                seq_groups[0].seq_group.sampling_params.prank is not None):
+            if seq_groups and (seq_groups[0].seq_group.sampling_params.pendpoint or\
+                seq_groups[0].seq_group.sampling_params.drank is not None):
                 break
             seq_group = waiting_queue[0]
 
@@ -825,8 +825,8 @@ class Scheduler:
         self.waiting.extendleft(running_scheduled.preempted)
         # Update new running requests.
         self.running = remaining_running
-        if any(s.seq_group.sampling_params.prank is not None or\
-                s.seq_group.sampling_params.dendpoint is not None \
+        if any(s.seq_group.sampling_params.drank is not None or\
+                s.seq_group.sampling_params.pendpoint is not None \
                     for s in prefills.seq_groups):
             assert len(prefills.seq_groups) == 1
             # print('🎃not put to running, will schedule it later')
