@@ -146,3 +146,6 @@ class GPUExecutorAsync(GPUExecutor, ExecutorAsyncBase):
         output = await make_async(self.driver_worker.execute_model
                                   )(execute_model_req=execute_model_req, )
         return output
+
+    async def complete_io_async(self) -> None:
+        return await make_async(self.driver_worker.complete_io)()

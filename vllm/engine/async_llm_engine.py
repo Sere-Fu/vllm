@@ -284,8 +284,7 @@ class _AsyncLLMEngine(LLMEngine):
             if not output: return []
         else:
             if get_kvcc().has_running_io():
-                run_kvcc_req = ExecuteModelRequest(seq_group_metadata_list=None, run_kvcc_only=True)
-                await self.model_executor.execute_model_async(run_kvcc_req)
+                await self.model_executor.complete_io_async()
             output = []
 
         request_outputs = self._process_model_outputs(

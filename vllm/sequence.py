@@ -996,8 +996,6 @@ class ExecuteModelRequest:
 
     output_future: object = None
 
-    run_kvcc_only: bool = False
-
     def clone(
         self, seq_group_metadata_list: List[SequenceGroupMetadata]
     ) -> "ExecuteModelRequest":

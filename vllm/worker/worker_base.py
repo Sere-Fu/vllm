@@ -213,16 +213,16 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         """
         raise NotImplementedError
 
+    @torch.inference_mode()
+    def complete_io(self):
+        get_kvcc().complete_io_and_dispatch_pending()
+
     def execute_model(
         self,
         execute_model_req: Optional[ExecuteModelRequest] = None
     ) -> Optional[List[SamplerOutput]]:
         """Executes at least one model step on the given sequences, unless no
         sequences are provided."""
-        if execute_model_req.run_kvcc_only:
-            with torch.inference_mode():
-                get_kvcc().complete_io_and_dispatch_pending()
-            return
             
         if self.is_driver_worker:
             if execute_model_req is None:

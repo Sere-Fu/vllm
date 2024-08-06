@@ -159,6 +159,11 @@ class ExecutorAsyncBase(ExecutorBase):
         """Executes one model step on the given sequences."""
         raise NotImplementedError
 
+    @abstractmethod
+    async def complete_io_async(self) -> None:
+        """Complete running I/O operations."""
+        raise NotImplementedError
+
     async def stop_remote_worker_execution_loop_async(self) -> None:
         """Releases parallel workers from model loop."""
         return
