@@ -33,8 +33,9 @@ class GPUExecutor(ExecutorBase):
         if distributed_init_method is None:
             distributed_init_method = get_distributed_init_method(
                 get_ip(), get_open_port())
-        rank = get_rank()
-        local_rank = rank
+        if get_rank():
+            rank = get_rank()
+            local_rank = rank
         return dict(
             model_config=self.model_config,
             parallel_config=self.parallel_config,

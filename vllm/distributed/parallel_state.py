@@ -700,14 +700,6 @@ class GroupCoordinator:
         if self.mq_broadcaster is not None:
             self.mq_broadcaster = None
 
-class DummyGroupCoordinator(GroupCoordinator):
-    def __init__(self):
-        self.world_size = 1
-        self.rank = envs.LOCAL_RANK
-        self.rank_in_group = envs.LOCAL_RANK
-        self.ranks = [envs.LOCAL_RANK]
-        self.ca_comm = None
-
 
 _WORLD: Optional[GroupCoordinator] = None
 
@@ -959,27 +951,30 @@ def initialize_model_parallel(
     backend = backend or torch.distributed.get_backend(
         get_world_group().device_group)
 
-    global _TP
-    global _PP
+    mp_base_rank = 0
+
     if (world_size !=
             tensor_model_parallel_size * pipeline_model_parallel_size):
-        _TP = DummyGroupCoordinator()
-        _PP = DummyGroupCoordinator()
-        return
-        raise RuntimeError(
-            f"world_size ({world_size}) is not equal to "
-            f"tensor_model_parallel_size ({tensor_model_parallel_size}) x "
-            f"pipeline_model_parallel_size ({pipeline_model_parallel_size})")
+        if world_size % (tensor_model_parallel_size * pipeline_model_parallel_size) != 0:
+            raise RuntimeError(
+                f"world_size ({world_size}) is not multiple of "
+                f"tensor_model_parallel_size ({tensor_model_parallel_size}) x "
+                f"pipeline_model_parallel_size ({pipeline_model_parallel_size})")
+        # splitwise
+        world_size = tensor_model_parallel_size * pipeline_model_parallel_size
+        assert world_size == 1, "splitwise only supports TP*PP=1 for now"
+        mp_base_rank = torch.distributed.get_rank()
 
     # Build the tensor model-parallel groups.
     num_tensor_model_parallel_groups: int = (world_size //
                                              tensor_model_parallel_size)
+    global _TP
     assert _TP is None, ("tensor model parallel group is already initialized")
     group_ranks = []
     for i in range(num_tensor_model_parallel_groups):
-        ranks = list(
+        ranks = [r + mp_base_rank for r in
             range(i * tensor_model_parallel_size,
-                  (i + 1) * tensor_model_parallel_size))
+                  (i + 1) * tensor_model_parallel_size)]
         group_ranks.append(ranks)
 
     # message queue broadcaster is only used in tensor model parallel group
@@ -991,11 +986,12 @@ def initialize_model_parallel(
     # Build the pipeline model-parallel groups.
     num_pipeline_model_parallel_groups: int = (world_size //
                                                pipeline_model_parallel_size)
+    global _PP
     assert _PP is None, (
         "pipeline model parallel group is already initialized")
     group_ranks = []
     for i in range(num_pipeline_model_parallel_groups):
-        ranks = list(range(i, world_size, num_pipeline_model_parallel_groups))
+        ranks = [r + mp_base_rank for r in range(i, world_size, num_pipeline_model_parallel_groups)]
         group_ranks.append(ranks)
     # pipeline parallel does not need custom allreduce
     _PP = init_model_parallel_group(group_ranks,
