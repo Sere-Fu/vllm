@@ -34,6 +34,7 @@ from vllm.sequence import (EmbeddingSequenceGroupOutput, ExecuteModelRequest,
                            PoolerOutput, SamplerOutput, Sequence,
                            SequenceGroup, SequenceGroupMetadata,
                            SequenceStatus)
+from vllm.splitwise import SplitwiseRequest, get_kvcc
 from vllm.tracing import (SpanAttributes, SpanKind, extract_trace_context,
                           init_tracer)
 from vllm.transformers_utils.config import try_get_generation_config
@@ -44,7 +45,6 @@ from vllm.usage.usage_lib import (UsageContext, is_usage_stats_enabled,
                                   usage_message)
 from vllm.utils import Counter
 from vllm.version import __version__ as VLLM_VERSION
-from vllm.distributed.parallel_state import get_kvcc
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
@@ -498,6 +498,7 @@ class LLMEngine:
         params: Union[SamplingParams, PoolingParams],
         arrival_time: float,
         lora_request: Optional[LoRARequest],
+        splitwise_request: Optional[SplitwiseRequest],
         prompt_adapter_request: Optional[PromptAdapterRequest],
         trace_headers: Optional[Dict[str, str]] = None,
     ) -> None:
@@ -517,6 +518,7 @@ class LLMEngine:
                 params,
                 arrival_time=arrival_time,
                 lora_request=lora_request,
+                splitwise_request=splitwise_request,
                 trace_headers=trace_headers,
                 prompt_adapter_request=prompt_adapter_request)
         elif isinstance(params, PoolingParams):
@@ -654,6 +656,7 @@ class LLMEngine:
         sampling_params: SamplingParams,
         arrival_time: float,
         lora_request: Optional[LoRARequest],
+        splitwise_request: Optional[SplitwiseRequest],
         trace_headers: Optional[Dict[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
     ) -> SequenceGroup:
@@ -680,6 +683,7 @@ class LLMEngine:
             arrival_time=arrival_time,
             sampling_params=sampling_params,
             lora_request=lora_request,
+            splitwise_request=splitwise_request,
             trace_headers=trace_headers,
             prompt_adapter_request=prompt_adapter_request)
 

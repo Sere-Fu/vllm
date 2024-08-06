@@ -21,9 +21,9 @@ from vllm.outputs import EmbeddingRequestOutput, RequestOutput
 from vllm.pooling_params import PoolingParams
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sampling_params import SamplingParams
-from vllm.sequence import ExecuteModelRequest, SamplerOutput
+from vllm.sequence import ExecuteModelRequest, SequenceGroup, SamplerOutput
 from vllm.usage.usage_lib import UsageContext
-from vllm.distributed.parallel_state import get_kvcc
+from vllm.splitwise import SplitwiseRequest, get_kvcc
 
 logger = init_logger(__name__)
 ENGINE_ITERATION_TIMEOUT_S = envs.VLLM_ENGINE_ITERATION_TIMEOUT_S
@@ -233,27 +233,27 @@ class _AsyncLLMEngine(LLMEngine):
         if not scheduler_outputs.is_empty():
             output_future = None
             # Execute the model.
-            if any(ssg.seq_group.sampling_params.pendpoint or ssg.seq_group.sampling_params.drank is not None\
+            if any(ssg.seq_group.splitwise_request is not None\
                     for ssg in scheduler_outputs.scheduled_seq_groups):
-                seq_group = scheduler_outputs.scheduled_seq_groups[0].seq_group
+                seq_group: SequenceGroup = scheduler_outputs.scheduled_seq_groups[0].seq_group
                 meta = seq_group_metadata_list[0]
                 if meta.is_prompt:
                     assert len(scheduler_outputs.scheduled_seq_groups) == 1
-                    if seq_group.sampling_params.pendpoint: #T
+                    if seq_group.splitwise_request.prefill_endpoint: #T
                         import torch.distributed as dist
                         import aiohttp
-                        async def notify_pendpoint():
+                        async def notify_prefill():
                             data = {
                                 'model': self.model_executor.model_config.model,
                                 'prompt': next(iter(seq_group.seqs_dict.values())).inputs['prompt_token_ids'],
                                 'max_tokens': 1,
-                                'drank': dist.get_rank(),
+                                'decoding_rank': dist.get_rank(),
                             }
                             async with aiohttp.ClientSession() as session:
-                                async with session.post(seq_group.sampling_params.pendpoint, json=data) as response:
+                                async with session.post(seq_group.splitwise_request.prefill_endpoint, json=data) as response:
                                     async for chunk in response.content.iter_any():
                                         pass
-                        asyncio.create_task(notify_pendpoint())
+                        asyncio.create_task(notify_prefill())
                         output_future = asyncio.get_event_loop().create_future()
                         async def continuation():
                             await output_future
@@ -267,7 +267,7 @@ class _AsyncLLMEngine(LLMEngine):
                             out_continuation(request_outputs)
                         asyncio.create_task(continuation())
                     else:
-                        assert seq_group.sampling_params.drank is not None
+                        assert seq_group.splitwise_request.decoding_rank is not None
 
             execute_model_req = ExecuteModelRequest(
                 seq_group_metadata_list=seq_group_metadata_list,
@@ -344,6 +344,7 @@ class _AsyncLLMEngine(LLMEngine):
             params: Union[SamplingParams, PoolingParams],
             arrival_time: Optional[float] = None,
             lora_request: Optional[LoRARequest] = None,
+            splitwise_request: Optional[SplitwiseRequest] = None,
             trace_headers: Optional[Dict[str, str]] = None,
             prompt_adapter_request: Optional[PromptAdapterRequest] = None
     ) -> None:
@@ -365,6 +366,7 @@ class _AsyncLLMEngine(LLMEngine):
             params=params,
             arrival_time=arrival_time,
             lora_request=lora_request,
+            splitwise_request=splitwise_request,
             prompt_adapter_request=prompt_adapter_request,
             trace_headers=trace_headers,
         )
@@ -686,6 +688,7 @@ class AsyncLLMEngine:
         params: Union[SamplingParams, PoolingParams],
         arrival_time: Optional[float] = None,
         lora_request: Optional[LoRARequest] = None,
+        splitwise_request: Optional[SplitwiseRequest] = None,
         trace_headers: Optional[Dict[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None
     ) -> AsyncStream:
@@ -729,6 +732,7 @@ class AsyncLLMEngine:
             params=params,
             arrival_time=arrival_time,
             lora_request=lora_request,
+            splitwise_request=splitwise_request,
             trace_headers=trace_headers,
             prompt_adapter_request=prompt_adapter_request)
 
@@ -740,6 +744,7 @@ class AsyncLLMEngine:
         sampling_params: SamplingParams,
         request_id: str,
         lora_request: Optional[LoRARequest] = None,
+        splitwise_request: Optional[SplitwiseRequest] = None,
         trace_headers: Optional[Dict[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None
     ) -> AsyncIterator[RequestOutput]:
@@ -812,6 +817,7 @@ class AsyncLLMEngine:
                 inputs,
                 sampling_params,
                 lora_request=lora_request,
+                splitwise_request=splitwise_request,
                 trace_headers=trace_headers,
                 prompt_adapter_request=prompt_adapter_request,
         ):
@@ -901,6 +907,7 @@ class AsyncLLMEngine:
         params: Union[SamplingParams, PoolingParams],
         *,
         lora_request: Optional[LoRARequest] = None,
+        splitwise_request: Optional[SplitwiseRequest] = None,
         trace_headers: Optional[Dict[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
     ) -> AsyncIterator[Union[RequestOutput, EmbeddingRequestOutput]]:
@@ -914,6 +921,7 @@ class AsyncLLMEngine:
             params,
             arrival_time=arrival_time,
             lora_request=lora_request,
+            splitwise_request=splitwise_request,
             trace_headers=trace_headers,
             prompt_adapter_request=prompt_adapter_request,
         )

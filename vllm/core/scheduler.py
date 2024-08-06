@@ -246,7 +246,7 @@ class SchedulerPrefillOutputs:
     to be recomputed from scratch.
     """
     # Selected sequences for prefill.
-    seq_groups: List[SequenceGroup]
+    seq_groups: List[ScheduledSequenceGroup]
     # Ignored sequence groups.
     ignored_seq_groups: List[SequenceGroup]
     num_lookahead_slots: int
@@ -680,8 +680,7 @@ class Scheduler:
 
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
         while self._passed_delay(time.time()) and waiting_queue:
-            if seq_groups and (seq_groups[0].seq_group.sampling_params.pendpoint or\
-                seq_groups[0].seq_group.sampling_params.drank is not None):
+            if seq_groups and (seq_groups[0].seq_group.splitwise_request is not None):
                 break
             seq_group = waiting_queue[0]
 
@@ -825,7 +824,7 @@ class Scheduler:
         self.waiting.extendleft(running_scheduled.preempted)
         # Update new running requests.
         self.running = remaining_running
-        if any(s.seq_group.sampling_params.pendpoint for s in prefills.seq_groups): # T, schedule after prefill
+        if any(s.seq_group.splitwise_request for s in prefills.seq_groups): # T, schedule after prefill
             assert len(prefills.seq_groups) == 1
         else:
             self.running.extend([s.seq_group for s in prefills.seq_groups])
@@ -1033,6 +1032,7 @@ class Scheduler:
                 pooling_params=seq_group.pooling_params,
                 token_chunk_size=token_chunk_size,
                 lora_request=seq_group.lora_request,
+                splitwise_request=seq_group.splitwise_request,
                 computed_block_nums=common_computed_block_nums,
                 state=seq_group.state,
                 # `multi_modal_data` will only be present for the 1st comm

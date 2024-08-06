@@ -134,8 +134,6 @@ class SamplingParams:
         spaces_between_special_tokens: bool = True,
         logits_processors: Optional[List[LogitsProcessor]] = None,
         truncate_prompt_tokens: Optional[Annotated[int, Field(ge=1)]] = None,
-        pendpoint: Optional[str] = None,
-        drank: Optional[int] = None,
         stream: Optional[bool] = None,
 
     ) -> None:
@@ -199,8 +197,6 @@ class SamplingParams:
                 self._verify_greedy_sampling()
         # eos_token_id is added to this by the engine
         self.all_stop_token_ids = set(self.stop_token_ids)
-        self.pendpoint = pendpoint
-        self.drank = drank
         self.stream = stream
 
     def _verify_args(self) -> None:
@@ -362,6 +358,4 @@ class SamplingParams:
             f"skip_special_tokens={self.skip_special_tokens}, "
             "spaces_between_special_tokens="
             f"{self.spaces_between_special_tokens}, "
-            f"pendpoint={self.pendpoint}, "
-            f"drank={self.drank}, "
             f"truncate_prompt_tokens={self.truncate_prompt_tokens})")

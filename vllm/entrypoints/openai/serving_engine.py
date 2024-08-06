@@ -18,6 +18,7 @@ from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sequence import Logprob
+from vllm.splitwise import SplitwiseRequest
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
 logger = init_logger(__name__)
@@ -166,6 +167,16 @@ class OpenAIServing:
                 return 'PromptAdapter', prompt_adapter
         # if _check_model has been called earlier, this will be unreachable
         raise ValueError(f"The model `{request.model}` does not exist.")
+
+
+    def _maybe_get_spliwise_request(
+        self, request: Union[CompletionRequest, ChatCompletionRequest,
+                             EmbeddingRequest]
+    ) -> Optional[SplitwiseRequest]:
+        if request.prefill_endpoint is None and request.decoding_rank is None:
+            return None
+        return SplitwiseRequest(prefill_endpoint=request.prefill_endpoint,
+                                decoding_rank=request.decoding_rank)
 
     def _validate_prompt_and_tokenize(
             self,

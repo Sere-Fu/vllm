@@ -123,6 +123,7 @@ class OpenAIServingCompletion(OpenAIServing):
                 sampling_params.logits_processors.append(
                     guided_decode_logit_processor)
             prompt_is_tokens, prompts = parse_prompt_format(request.prompt)
+            splitwise_request = self._maybe_get_spliwise_request(request)
 
             for i, prompt in enumerate(prompts):
                 if prompt_is_tokens:
@@ -155,6 +156,7 @@ class OpenAIServingCompletion(OpenAIServing):
                     sampling_params,
                     f"{request_id}-{i}",
                     lora_request=lora_request,
+                    splitwise_request=splitwise_request,
                     prompt_adapter_request=prompt_adapter_request,
                     trace_headers=trace_headers,
                 )

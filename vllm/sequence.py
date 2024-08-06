@@ -13,6 +13,7 @@ from vllm.lora.request import LoRARequest
 from vllm.pooling_params import PoolingParams
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sampling_params import SamplingParams
+from vllm.splitwise import SplitwiseRequest
 
 if TYPE_CHECKING:
     from vllm.inputs import LLMInputs
@@ -435,6 +436,7 @@ class SequenceGroup:
         arrival_time: float,
         sampling_params: Optional[SamplingParams] = None,
         lora_request: Optional[LoRARequest] = None,
+        splitwise_request: Optional[SplitwiseRequest] = None,
         embeddings: Optional[List[float]] = None,
         pooling_params: Optional[PoolingParams] = None,
         encoder_seq: Optional[Sequence] = None,
@@ -450,6 +452,7 @@ class SequenceGroup:
                                       first_token_time=None,
                                       time_in_queue=None)
         self.lora_request = lora_request
+        self.splitwise_request = splitwise_request
         self.prompt_logprobs: Optional[PromptLogprobs] = None
         self.state = SequenceGroupState()
         self.embeddings = embeddings
@@ -662,6 +665,7 @@ class SequenceGroupMetadata:
         pooling_params: Optional[PoolingParams] = None,
         token_chunk_size: Optional[int] = None,
         lora_request: Optional[LoRARequest] = None,
+        splitwise_request: Optional[SplitwiseRequest] = None,
         computed_block_nums: Optional[List[int]] = None,
         state: Optional[SequenceGroupState] = None,
         multi_modal_data: Optional["MultiModalDataDict"] = None,
@@ -676,6 +680,7 @@ class SequenceGroupMetadata:
         self.block_tables = block_tables
         self.pooling_params = pooling_params
         self.lora_request = lora_request
+        self.splitwise_request = splitwise_request
         self.prompt_adapter_request = prompt_adapter_request
         self.computed_block_nums = computed_block_nums
         self.multi_modal_data = multi_modal_data
