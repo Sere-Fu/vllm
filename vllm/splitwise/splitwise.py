@@ -72,13 +72,10 @@ class KVCacheCoordinator:
                 self.wip.popleft()
             else:
                 break
-        while self.pending:
-            if len(self.wip) < KVCacheCoordinator.MAX_WIP:
-                buf, op, cb = self.pending.popleft()
-                buf = self._maybe_alloc(buf)
-                self.wip.append((buf, op(buf), cb))
-            else:
-                break
+        while self.pending and len(self.wip) < KVCacheCoordinator.MAX_WIP:
+            buf, op, cb = self.pending.popleft()
+            self._invoke(buf, op, cb)
+
 
     def has_running_io(self):
         return len(self.wip) > 0 or len(self.pending) > 0
@@ -126,8 +123,11 @@ def notify_splitwise_prefill_and_resume_later(model: str, scheduler: Scheduler,
     async def continuation():
         await output_future
         output = output_future.result()
-        scheduler.running.append(seq_group)
-        out_continuation(output)
+        try:
+            out_continuation(output)
+            scheduler.running.append(seq_group)
+        except KeyError: # The request was cancelled
+            pass
     asyncio.create_task(continuation())
 
 
