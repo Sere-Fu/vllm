@@ -238,7 +238,7 @@ class _AsyncLLMEngine(LLMEngine):
                    for ssg in scheduler_outputs.scheduled_seq_groups)\
                     and seq_group_metadata_list[0].is_prompt:
                 is_splitwise_d = True
-                def continuation(output): 
+                def continuation(output):
                     # NOTE: This needs to be synchronized with the code after model_executor returns
                     request_outputs = self._process_model_outputs(
                         output, scheduler_outputs.scheduled_seq_groups,
@@ -246,8 +246,8 @@ class _AsyncLLMEngine(LLMEngine):
                     self.do_log_stats(scheduler_outputs, output)
                     self.do_tracing(scheduler_outputs)
                     out_continuation(request_outputs)
-                notify_prefill_and_resume_later(self.model_executor.model_config.model, 
-                                           self.scheduler[virtual_engine], 
+                notify_prefill_and_resume_later(self.model_executor.model_config.model,
+                                           self.scheduler[virtual_engine],
                                            scheduler_outputs, continuation)
             # Execute the model.
             execute_model_req = ExecuteModelRequest(
@@ -573,9 +573,6 @@ class AsyncLLMEngine:
         if finished_requests:
             await self._engine_abort(finished_requests)
 
-
-
-        
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()  # type: ignore
         else:
@@ -592,7 +589,7 @@ class AsyncLLMEngine:
             self._request_tracker.process_request_output(
                 request_output, verbose=self.log_requests)
         return len(request_outputs) > 0
-        
+
     async def _engine_abort(self, request_ids: Iterable[str]):
         if self.engine_use_ray:
             await self.engine.abort_request.remote(request_ids)  # type: ignore

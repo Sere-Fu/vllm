@@ -223,7 +223,6 @@ class LocalOrDistributedWorkerBase(WorkerBase):
     ) -> Optional[List[SamplerOutput]]:
         """Executes at least one model step on the given sequences, unless no
         sequences are provided."""
-            
         if self.is_driver_worker:
             if execute_model_req is None:
                 if self.do_metadata_broadcast:

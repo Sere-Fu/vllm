@@ -256,7 +256,7 @@ environment_variables: Dict[str, Callable[[], Any]] = {
 
     "VLLM_WORLD":
     lambda: int(os.getenv("VLLM_WORLD", "1")),
-    "VLLM_RANK": 
+    "VLLM_RANK":
     lambda: int(os.getenv("VLLM_RANK", "0")),
 }
 

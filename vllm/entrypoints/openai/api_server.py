@@ -141,6 +141,7 @@ async def create_chat_completion(request: ChatCompletionRequest,
         assert isinstance(generator, ChatCompletionResponse)
         return JSONResponse(content=generator.model_dump())
 
+
 @app.post("/v1/completions")
 async def create_completion(request: CompletionRequest, raw_request: Request):
     generator = await openai_serving_completion.create_completion(

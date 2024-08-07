@@ -58,7 +58,6 @@ from vllm.worker.model_runner_base import (
     _init_attn_metadata_from_tensor_dict,
     _init_sampling_metadata_from_tensor_dict)
 
-
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
 
@@ -1355,7 +1354,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     logits=logits_buf,
                     sampling_metadata=model_input.sampling_metadata,
                 )
-            recv_kv_caches_and_resume_later(model_input.splitwise_request, 
+            recv_kv_caches_and_resume_later(model_input.splitwise_request,
                         kv_caches, model_input.attn_metadata.slot_mapping, self.kv_cache_dtype,
                         self.model.config, model_input.input_tokens.shape[0], self.model_config.dtype, self.device,
                         self.vocab_size, logits_callback)
@@ -1376,7 +1375,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
         logits = self.model.compute_logits(hidden_or_intermediate_states,
                                            model_input.sampling_metadata)
-        
+
         if model_input.splitwise_request and model_input.splitwise_request.decoding_rank:
             kvcc = get_kvcc()
             # print(f'👹 {kvcc.next_id()}@{time.time()}: issue isend logits: shape={logits.shape}')
