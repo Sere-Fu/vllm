@@ -47,7 +47,8 @@ from vllm.prompt_adapter.worker_manager import (
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import (IntermediateTensors, SamplerOutput,
                            SequenceGroupMetadata)
-from vllm.splitwise import SplitwiseRequest, get_kvcc
+from vllm.splitwise.request import SplitwiseRequest
+from vllm.splitwise.splitwise import get_kvcc
 from vllm.utils import (CudaMemoryProfiler, get_kv_cache_torch_dtype, is_hip,
                         is_pin_memory_available, make_tensor_with_pad)
 from vllm.worker.model_runner_base import (

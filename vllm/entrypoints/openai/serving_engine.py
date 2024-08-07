@@ -18,7 +18,7 @@ from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sequence import Logprob
-from vllm.splitwise import SplitwiseRequest
+from vllm.splitwise.request import SplitwiseRequest
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
 logger = init_logger(__name__)

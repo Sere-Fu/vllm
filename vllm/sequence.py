@@ -13,7 +13,7 @@ from vllm.lora.request import LoRARequest
 from vllm.pooling_params import PoolingParams
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sampling_params import SamplingParams
-from vllm.splitwise import SplitwiseRequest
+from vllm.splitwise.request import SplitwiseRequest
 
 if TYPE_CHECKING:
     from vllm.inputs import LLMInputs

@@ -34,7 +34,8 @@ from vllm.sequence import (EmbeddingSequenceGroupOutput, ExecuteModelRequest,
                            PoolerOutput, SamplerOutput, Sequence,
                            SequenceGroup, SequenceGroupMetadata,
                            SequenceStatus)
-from vllm.splitwise import SplitwiseRequest, get_kvcc
+from vllm.splitwise.request import SplitwiseRequest
+from vllm.splitwise.splitwise import get_kvcc
 from vllm.tracing import (SpanAttributes, SpanKind, extract_trace_context,
                           init_tracer)
 from vllm.transformers_utils.config import try_get_generation_config
