@@ -18,33 +18,50 @@ from vllm.sequence import SamplerOutput, SequenceGroup
 from .request import SplitwiseRequest
 
 
+class LazyBuf:
+    def __init__(self, factory):
+        self.factory = factory
+        self.buf = None
+
+    def __call__(self):
+        if self.buf is None:
+            self.buf = self.factory()
+        return self.buf
+
+
 class KVCacheCoordinator:
-    MAX_WIP = 400
+    MAX_WIP = 200
 
     def __init__(self):
         self.pending = deque()  # Pending caused by too many running IOs
         self.wip = deque()
         self.p2p_group = dist.new_group(list(range(dist.get_world_size())))
 
+    def _maybe_alloc(self, buf):
+        if callable(buf):
+            buf = buf()
+        assert isinstance(buf, torch.Tensor)
+        return buf
+
     def _invoke(self, buf, op, cb):
         if len(self.pending) >= KVCacheCoordinator.MAX_WIP * 4:
             t0 = time.perf_counter()
             while len(self.pending) >= KVCacheCoordinator.MAX_WIP * 4:
-                assert time.perf_counter() - t0 < 1, f'👾 Stall {(time.perf_counter() - t0)*1000:.2f} ms'
+                assert time.perf_counter() - \
+                    t0 < 1, f'👾 Stall {(time.perf_counter() - t0)*1000:.2f} ms'
                 self.complete_io_and_dispatch_pending()
 
         if len(self.wip) < KVCacheCoordinator.MAX_WIP:
-            self.wip.append((buf, op(), cb))
+            buf = self._maybe_alloc(buf)
+            self.wip.append((buf, op(buf), cb))
         else:
             self.pending.append((buf, op, cb))
 
     def isend(self, buf, dst, cb=None):
-        self._invoke(buf, lambda: dist.isend(
-            buf, dst=dst, group=self.p2p_group), cb)
+        self._invoke(buf, lambda buf: dist.isend(buf, dst=dst, group=self.p2p_group), cb)
 
     def irecv(self, buf, src, cb=None):
-        self._invoke(buf, lambda: dist.irecv(
-            buf, src=src, group=self.p2p_group), cb)
+        self._invoke(buf, lambda buf: dist.irecv(buf, src=src, group=self.p2p_group), cb)
 
     def complete_io_and_dispatch_pending(self):
         while self.wip:
@@ -58,8 +75,8 @@ class KVCacheCoordinator:
         while self.pending:
             if len(self.wip) < KVCacheCoordinator.MAX_WIP:
                 buf, op, cb = self.pending.popleft()
-                self.n_issue += 1
-                self.wip.append((buf, op(), cb))
+                buf = self._maybe_alloc(buf)
+                self.wip.append((buf, op(buf), cb))
             else:
                 break
 
@@ -125,13 +142,13 @@ def recv_splitwise_kv_caches_and_resume_later(
         kv_heads = config.num_key_value_heads
     kv_cache_shape = (token_len, kv_heads, config.hidden_size // config.num_attention_heads)
 
-    def mkcb(i, k_buf, v_buf):
+    def mkcb(i, k_buf: LazyBuf, v_buf: LazyBuf):
         def cb():
             key_cache = kv_caches[i][0]
             value_cache = kv_caches[i][1]
             ops.reshape_and_cache_flash(
-                k_buf,
-                v_buf,
+                k_buf(),
+                v_buf(),
                 key_cache,
                 value_cache,
                 slot_mapping.flatten(),
@@ -140,8 +157,8 @@ def recv_splitwise_kv_caches_and_resume_later(
         return cb
 
     for i in range(config.num_hidden_layers):
-        k_buf = torch.empty(kv_cache_shape, dtype=model_dtype, device=device)
-        v_buf = torch.empty(kv_cache_shape, dtype=model_dtype, device=device)
+        k_buf = LazyBuf(lambda: torch.empty(kv_cache_shape, dtype=model_dtype, device=device))
+        v_buf = LazyBuf(lambda: torch.empty(kv_cache_shape, dtype=model_dtype, device=device))
         _KVCC.irecv(k_buf, src=splitwise_request.prefill_rank)
         _KVCC.irecv(v_buf, src=splitwise_request.prefill_rank, cb=mkcb(i, k_buf, v_buf))
 
