@@ -255,6 +255,7 @@ class _AsyncLLMEngine(LLMEngine):
                                         pass
                         asyncio.create_task(notify_prefill())
                         output_future = asyncio.get_event_loop().create_future()
+                        seq_group.splitwise_request.future = output_future
                         async def continuation():
                             await output_future
                             output = output_future.result()
@@ -277,8 +278,7 @@ class _AsyncLLMEngine(LLMEngine):
                 virtual_engine=virtual_engine,
                 num_lookahead_slots=scheduler_outputs.num_lookahead_slots,
                 running_queue_size=scheduler_outputs.running_queue_size,
-                finished_requests_ids=finished_requests_ids,
-                output_future=output_future)
+                finished_requests_ids=finished_requests_ids)
             output = await self.model_executor.execute_model_async(
                 execute_model_req)
             if not output: return []

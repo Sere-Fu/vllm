@@ -134,8 +134,6 @@ class SamplingParams:
         spaces_between_special_tokens: bool = True,
         logits_processors: Optional[List[LogitsProcessor]] = None,
         truncate_prompt_tokens: Optional[Annotated[int, Field(ge=1)]] = None,
-        stream: Optional[bool] = None,
-
     ) -> None:
         self.n = n
         self.best_of = best_of if best_of is not None else n
@@ -197,7 +195,6 @@ class SamplingParams:
                 self._verify_greedy_sampling()
         # eos_token_id is added to this by the engine
         self.all_stop_token_ids = set(self.stop_token_ids)
-        self.stream = stream
 
     def _verify_args(self) -> None:
         if self.n < 1:

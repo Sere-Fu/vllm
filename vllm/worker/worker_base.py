@@ -274,16 +274,6 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             intermediate_tensors = IntermediateTensors(
                 get_pp_group().recv_tensor_dict())
 
-        if any(sgm.splitwise_request for sgm in execute_model_req.seq_group_metadata_list):
-            if execute_model_req.seq_group_metadata_list[0].is_prompt:
-                assert len(execute_model_req.seq_group_metadata_list) == 1
-                splitwise_request = execute_model_req.seq_group_metadata_list[0].splitwise_request
-                if splitwise_request.prefill_endpoint: # T
-                    model_input.prank = 0 # FIXME: determine prank by endpoint
-                    model_input.output_future = execute_model_req.output_future
-                else: # P
-                    model_input.drank = splitwise_request.decoding_rank
-
         output = self.model_runner.execute_model(
             model_input, self.kv_cache[worker_input.virtual_engine]
             if self.kv_cache is not None else None, intermediate_tensors,

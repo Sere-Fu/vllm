@@ -496,7 +496,6 @@ class CompletionRequest(OpenAIBaseModel):
             length_penalty=self.length_penalty,
             logits_processors=logits_processors,
             truncate_prompt_tokens=self.truncate_prompt_tokens,
-            stream=self.stream,
         )
 
     @model_validator(mode="before")

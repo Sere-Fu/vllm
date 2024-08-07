@@ -123,7 +123,7 @@ class FlashAttentionMetadata(AttentionMetadata):
     _cached_prefill_metadata: Optional["FlashAttentionMetadata"] = None
     _cached_decode_metadata: Optional["FlashAttentionMetadata"] = None
 
-    drank: Optional[int] = None
+    decoding_rank: Optional[int] = None
 
     @property
     def prefill_metadata(self) -> Optional["FlashAttentionMetadata"]:
@@ -288,11 +288,12 @@ class FlashAttentionImpl(AttentionImpl):
         key = key.view(-1, self.num_kv_heads, self.head_size)
         value = value.view(-1, self.num_kv_heads, self.head_size)
 
-        if attn_metadata.drank is not None:
+
+        if attn_metadata.decoding_rank is not None:
             kvcc = get_kvcc()
             # print(f'👹isend: kv shape={key.shape}')
-            kvcc.isend(key.contiguous(), attn_metadata.drank)
-            kvcc.isend(value.contiguous(), attn_metadata.drank)
+            kvcc.isend(key.contiguous(), attn_metadata.decoding_rank)
+            kvcc.isend(value.contiguous(), attn_metadata.decoding_rank)
 
         if kv_cache is not None:
             key_cache = kv_cache[0]

@@ -994,8 +994,6 @@ class ExecuteModelRequest:
     # Finished request ids since last step.
     finished_requests_ids: List[str] = field(default_factory=list)
 
-    output_future: object = None
-
     def clone(
         self, seq_group_metadata_list: List[SequenceGroupMetadata]
     ) -> "ExecuteModelRequest":

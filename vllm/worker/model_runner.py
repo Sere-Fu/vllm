@@ -47,7 +47,7 @@ from vllm.prompt_adapter.worker_manager import (
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import (IntermediateTensors, SamplerOutput,
                            SequenceGroupMetadata)
-from vllm.splitwise import get_kvcc
+from vllm.splitwise import SplitwiseRequest, get_kvcc
 from vllm.utils import (CudaMemoryProfiler, get_kv_cache_torch_dtype, is_hip,
                         is_pin_memory_available, make_tensor_with_pad)
 from vllm.worker.model_runner_base import (
@@ -77,7 +77,7 @@ _NUM_WARMUP_ITERS = 2
 TModelInputForGPU = TypeVar('TModelInputForGPU', bound="ModelInputForGPU")
 
 
-@dataclasses.dataclass(frozen=False)
+@dataclasses.dataclass(frozen=True)
 class ModelInputForGPU(ModelRunnerInputBase):
     """
     This base class contains metadata needed for the base model forward pass
@@ -98,9 +98,7 @@ class ModelInputForGPU(ModelRunnerInputBase):
     request_ids_to_seq_ids: Optional[Dict[str, List[int]]] = None
     finished_requests_ids: Optional[List[str]] = None
     virtual_engine: int = 0
-    prank: Optional[int] = None
-    drank: Optional[int] = None
-    output_future = None
+    splitwise_request: Optional[SplitwiseRequest] = None
 
     def as_broadcastable_tensor_dict(self) -> Dict[str, Any]:
         tensor_dict = {
@@ -130,7 +128,7 @@ class ModelInputForGPU(ModelRunnerInputBase):
         return cls(**tensor_dict)
 
 
-@dataclasses.dataclass(frozen=False)
+@dataclasses.dataclass(frozen=True)
 class ModelInputForGPUWithSamplingMetadata(ModelInputForGPU):
     """
     Used by the ModelRunner.
@@ -737,6 +735,8 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                              " Set Flashinfer backend by "
                              "export VLLM_ATTENTION_BACKEND=FLASHINFER.")
 
+        splitwise_request: SplitwiseRequest = seq_group_metadata_list[0].splitwise_request
+
         if self.attn_backend.get_name() == "flashinfer":
             if len(paged_kv_indptr) > 0:
                 paged_kv_indices_tensor = torch.tensor(paged_kv_indices,
@@ -793,6 +793,8 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                 context_lens_tensor=context_lens_tensor,
                 block_tables=block_tables,
                 use_cuda_graph=use_captured_graph,
+                decoding_rank=splitwise_request.decoding_rank\
+                    if splitwise_request else None,
             )
 
         if self.lora_config:
@@ -831,6 +833,7 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             finished_requests_ids=finished_requests_ids,
             prompt_adapter_mapping=prompt_adapter_mapping,
             prompt_adapter_requests=prompt_adapter_requests,
+            splitwise_request=splitwise_request,
         )
 
     @torch.inference_mode()
@@ -1345,8 +1348,8 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             "request_ids_to_seq_ids": model_input.request_ids_to_seq_ids,
         } if self.has_seqlen_agnostic else {}
 
-        assert not model_input.prank or not model_input.drank
-        if model_input.attn_metadata.prefill_metadata is not None and model_input.prank is not None:
+        prefill_rank = model_input.splitwise_request.prefill_rank if model_input.splitwise_request else None
+        if model_input.attn_metadata.prefill_metadata is not None and prefill_rank is not None:
             def mkcb(i, k_buf, v_buf):
                 def cb():
                     # print(f'👹recv kv: shape={k_buf.shape}, k={id(k_buf)}, v={id(v_buf)}')
@@ -1368,10 +1371,10 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 shape = (model_input.input_tokens.shape[0], kv_heads, self.model.config.hidden_size//self.model.config.num_attention_heads)
                 k_buf = torch.empty(shape, dtype=self.model_config.dtype, device=self.device)
                 v_buf = torch.empty(shape, dtype=self.model_config.dtype, device=self.device)
-                kvcc.irecv(k_buf, src=model_input.prank)
-                kvcc.irecv(v_buf, src=model_input.prank, cb=mkcb(i, k_buf, v_buf))
+                kvcc.irecv(k_buf, src=prefill_rank)
+                kvcc.irecv(v_buf, src=prefill_rank, cb=mkcb(i, k_buf, v_buf))
             logits_buf = torch.empty((1, self.vocab_size), dtype=self.model_config.dtype, device=self.device)
-            assert model_input.output_future is not None
+            assert model_input.splitwise_request.future is not None
             ioid = kvcc.next_id()
             # print(f'👹 {ioid}@{time.time()}: issue irecv')
             def cb():
@@ -1380,12 +1383,11 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     logits=logits_buf,
                     sampling_metadata=model_input.sampling_metadata,
                 )
-                model_input.output_future.set_result([output])
-            kvcc.irecv(logits_buf, src=model_input.prank, cb=cb)
+                model_input.splitwise_request.future.set_result([output])
+            kvcc.irecv(logits_buf, src=prefill_rank, cb=cb)
             kvcc.complete_io_and_dispatch_pending()
             return []
         else:
-            model_input.attn_metadata.drank = model_input.drank
             hidden_or_intermediate_states = model_executable(
                 input_ids=model_input.input_tokens,
                 positions=model_input.input_positions,
@@ -1403,10 +1405,10 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         logits = self.model.compute_logits(hidden_or_intermediate_states,
                                            model_input.sampling_metadata)
         
-        if model_input.drank is not None:
+        if model_input.splitwise_request and model_input.splitwise_request.decoding_rank:
             kvcc = get_kvcc()
             # print(f'👹 {kvcc.next_id()}@{time.time()}: issue isend logits: shape={logits.shape}')
-            kvcc.isend(logits, dst=model_input.drank)
+            kvcc.isend(logits, dst=model_input.splitwise_request.decoding_rank)
 
         if not self.is_driver_worker:
             return []
