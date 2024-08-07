@@ -48,7 +48,7 @@ from vllm.sampling_params import SamplingParams
 from vllm.sequence import (IntermediateTensors, SamplerOutput,
                            SequenceGroupMetadata)
 from vllm.splitwise.request import SplitwiseRequest
-from vllm.splitwise.splitwise import get_kvcc
+from vllm.splitwise.splitwise import get_kvcc, recv_kv_caches_and_resume_later
 from vllm.utils import (CudaMemoryProfiler, get_kv_cache_torch_dtype, is_hip,
                         is_pin_memory_available, make_tensor_with_pad)
 from vllm.worker.model_runner_base import (
@@ -57,7 +57,6 @@ from vllm.worker.model_runner_base import (
     _add_sampling_metadata_broadcastable_dict,
     _init_attn_metadata_from_tensor_dict,
     _init_sampling_metadata_from_tensor_dict)
-from vllm import _custom_ops as ops
 
 
 if TYPE_CHECKING:
@@ -1349,55 +1348,27 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             "request_ids_to_seq_ids": model_input.request_ids_to_seq_ids,
         } if self.has_seqlen_agnostic else {}
 
-        prefill_rank = model_input.splitwise_request.prefill_rank if model_input.splitwise_request else None
-        if model_input.attn_metadata.prefill_metadata is not None and prefill_rank is not None:
-            def mkcb(i, k_buf, v_buf):
-                def cb():
-                    # print(f'👹recv kv: shape={k_buf.shape}, k={id(k_buf)}, v={id(v_buf)}')
-                    key_cache = kv_caches[i][0]
-                    value_cache = kv_caches[i][1]
-                    ops.reshape_and_cache_flash(
-                        k_buf,
-                        v_buf,
-                        key_cache,
-                        value_cache,
-                        model_input.attn_metadata.slot_mapping.flatten(),
-                        self.kv_cache_dtype,
-                    )
-                return cb
-            # print(f'👹 starts to recv {self.model.config.num_hidden_layers*2} tensors')
-            kvcc = get_kvcc()
-            for i in range(self.model.config.num_hidden_layers):
-                kv_heads = self.model.config.num_key_value_heads if hasattr(self.model.config, 'num_key_value_heads') else self.model.config.num_attention_heads
-                shape = (model_input.input_tokens.shape[0], kv_heads, self.model.config.hidden_size//self.model.config.num_attention_heads)
-                k_buf = torch.empty(shape, dtype=self.model_config.dtype, device=self.device)
-                v_buf = torch.empty(shape, dtype=self.model_config.dtype, device=self.device)
-                kvcc.irecv(k_buf, src=prefill_rank)
-                kvcc.irecv(v_buf, src=prefill_rank, cb=mkcb(i, k_buf, v_buf))
-            logits_buf = torch.empty((1, self.vocab_size), dtype=self.model_config.dtype, device=self.device)
-            assert model_input.splitwise_request.future is not None
-            ioid = kvcc.next_id()
-            # print(f'👹 {ioid}@{time.time()}: issue irecv')
-            def cb():
-                # print(f'👹 {ioid}@{time.time()}: finsh irecv logits: shape={logits_buf.shape}. let\'s go continue')
-                output: SamplerOutput = self.model.sample(
+        if model_input.attn_metadata.prefill_metadata is not None and\
+            model_input.splitwise_request and model_input.splitwise_request.prefill_rank is not None:
+            def logits_callback(logits_buf: torch.Tensor) -> SamplerOutput:
+                return self.model.sample(
                     logits=logits_buf,
                     sampling_metadata=model_input.sampling_metadata,
                 )
-                model_input.splitwise_request.future.set_result([output])
-            kvcc.irecv(logits_buf, src=prefill_rank, cb=cb)
-            kvcc.complete_io_and_dispatch_pending()
+            recv_kv_caches_and_resume_later(model_input.splitwise_request, 
+                        kv_caches, model_input.attn_metadata.slot_mapping, self.kv_cache_dtype,
+                        self.model.config, model_input.input_tokens.shape[0], self.model_config.dtype, self.device,
+                        self.vocab_size, logits_callback)
             return []
-        else:
-            hidden_or_intermediate_states = model_executable(
-                input_ids=model_input.input_tokens,
-                positions=model_input.input_positions,
-                kv_caches=kv_caches,
-                attn_metadata=model_input.attn_metadata,
-                intermediate_tensors=intermediate_tensors,
-                **multi_modal_kwargs,
-                **seqlen_agnostic_kwargs)
-            get_kvcc().complete_io_and_dispatch_pending()
+        hidden_or_intermediate_states = model_executable(
+            input_ids=model_input.input_tokens,
+            positions=model_input.input_positions,
+            kv_caches=kv_caches,
+            attn_metadata=model_input.attn_metadata,
+            intermediate_tensors=intermediate_tensors,
+            **multi_modal_kwargs,
+            **seqlen_agnostic_kwargs)
+        get_kvcc().complete_io_and_dispatch_pending()
 
         # Compute the logits in the last pipeline stage.
         if not get_pp_group().is_last_rank:

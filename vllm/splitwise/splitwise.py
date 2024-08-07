@@ -1,18 +1,21 @@
 
-from vllm.outputs import RequestOutput
-from vllm.sequence import SequenceGroup
-from vllm.core.scheduler import Scheduler, SchedulerOutputs
-
-from typing import Callable, List
-import aiohttp
-import torch.distributed as dist
 import asyncio
-
 import time
 from collections import deque
+from typing import Callable, List
 
-
+import aiohttp
+import torch
+import torch.distributed as dist
 from torch import distributed as dist
+from transformers import PretrainedConfig
+
+from vllm import _custom_ops as ops
+from vllm.core.scheduler import Scheduler, SchedulerOutputs
+from vllm.outputs import RequestOutput
+from vllm.sequence import SamplerOutput, SequenceGroup
+
+from .request import SplitwiseRequest
 
 
 class KVCacheCoordinator:
@@ -116,7 +119,7 @@ def notify_prefill_and_resume_later(model: str, scheduler: Scheduler,
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(seq_group.splitwise_request.prefill_endpoint, json=data) as response:
-                async for chunk in response.content.iter_any():
+                async for _ in response.content.iter_any():
                     pass
     asyncio.create_task(notify_prefill())
     output_future = asyncio.get_event_loop().create_future()
@@ -130,5 +133,45 @@ def notify_prefill_and_resume_later(model: str, scheduler: Scheduler,
     asyncio.create_task(continuation())
 
 
-def recv_kv_cache():
-    pass
+def recv_kv_caches_and_resume_later(
+        splitwise_request: SplitwiseRequest,
+        kv_caches: List[torch.Tensor], slot_mapping: torch.Tensor, kv_cache_dtype: str,
+        config: PretrainedConfig, token_len: int, model_dtype: torch.dtype, device: torch.device,
+        vocab_size: int, logits_callback: Callable[[torch.Tensor], SamplerOutput]):
+
+    kv_heads = config.num_attention_heads
+    if hasattr(config, 'num_key_value_heads'):
+        kv_heads = config.num_key_value_heads
+    kv_cache_shape = (token_len, kv_heads, config.hidden_size // config.num_attention_heads)
+
+    def mkcb(i, k_buf, v_buf):
+        def cb():
+            key_cache = kv_caches[i][0]
+            value_cache = kv_caches[i][1]
+            ops.reshape_and_cache_flash(
+                k_buf,
+                v_buf,
+                key_cache,
+                value_cache,
+                slot_mapping.flatten(),
+                kv_cache_dtype,
+            )
+        return cb
+
+    kvcc = get_kvcc()
+
+    for i in range(config.num_hidden_layers):
+        k_buf = torch.empty(kv_cache_shape, dtype=model_dtype, device=device)
+        v_buf = torch.empty(kv_cache_shape, dtype=model_dtype, device=device)
+        kvcc.irecv(k_buf, src=splitwise_request.prefill_rank)
+        kvcc.irecv(v_buf, src=splitwise_request.prefill_rank,
+                   cb=mkcb(i, k_buf, v_buf))
+
+    logits_buf = torch.empty((1, vocab_size), dtype=model_dtype, device=device)
+    assert splitwise_request.future is not None
+
+    def cb():
+        output: SamplerOutput = logits_callback(logits_buf)
+        splitwise_request.future.set_result([output])
+    kvcc.irecv(logits_buf, src=splitwise_request.prefill_rank, cb=cb)
+    kvcc.complete_io_and_dispatch_pending()

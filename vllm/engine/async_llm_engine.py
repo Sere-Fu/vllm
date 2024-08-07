@@ -261,8 +261,7 @@ class _AsyncLLMEngine(LLMEngine):
                 finished_requests_ids=finished_requests_ids)
             output = await self.model_executor.execute_model_async(
                 execute_model_req)
-            if is_splitwise_d:
-                assert not output, "prefill is running in the prefill instance"
+            if is_splitwise_d and not output:
                 return []
         else:
             if get_kvcc().has_running_io():
