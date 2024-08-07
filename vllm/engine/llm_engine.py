@@ -35,7 +35,7 @@ from vllm.sequence import (EmbeddingSequenceGroupOutput, ExecuteModelRequest,
                            SequenceGroup, SequenceGroupMetadata,
                            SequenceStatus)
 from vllm.splitwise.request import SplitwiseRequest
-from vllm.splitwise.splitwise import get_kvcc
+from vllm.splitwise.splitwise import has_uncompleted_splitwise_io
 from vllm.tracing import (SpanAttributes, SpanKind, extract_trace_context,
                           init_tracer)
 from vllm.transformers_utils.config import try_get_generation_config
@@ -755,7 +755,7 @@ class LLMEngine:
         """
         Returns True if there are unfinished requests for the virtual engine.
         """
-        return self.scheduler[virtual_engine].has_unfinished_seqs() or get_kvcc().has_running_io()
+        return self.scheduler[virtual_engine].has_unfinished_seqs() or has_uncompleted_splitwise_io()
 
     def _process_sequence_group_outputs(
         self,

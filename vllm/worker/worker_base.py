@@ -11,7 +11,7 @@ from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.sequence import (ExecuteModelRequest, IntermediateTensors,
                            SamplerOutput)
-from vllm.splitwise.splitwise import get_kvcc
+from vllm.splitwise.splitwise import complete_splitwise_io
 from vllm.utils import (enable_trace_function_call_for_thread, is_hip,
                         update_environment_variables)
 from vllm.worker.model_runner_base import ModelRunnerBase, ModelRunnerInputBase
@@ -215,7 +215,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
 
     @torch.inference_mode()
     def complete_io(self):
-        get_kvcc().complete_io_and_dispatch_pending()
+        complete_splitwise_io()
 
     def execute_model(
         self,

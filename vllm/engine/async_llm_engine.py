@@ -23,7 +23,7 @@ from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import ExecuteModelRequest, SamplerOutput, SequenceGroup
 from vllm.usage.usage_lib import UsageContext
-from vllm.splitwise.splitwise import get_kvcc, notify_prefill_and_resume_later
+from vllm.splitwise.splitwise import has_uncompleted_splitwise_io, notify_splitwise_prefill_and_resume_later
 from vllm.splitwise.request import SplitwiseRequest
 
 logger = init_logger(__name__)
@@ -246,7 +246,7 @@ class _AsyncLLMEngine(LLMEngine):
                     self.do_log_stats(scheduler_outputs, output)
                     self.do_tracing(scheduler_outputs)
                     out_continuation(request_outputs)
-                notify_prefill_and_resume_later(self.model_executor.model_config.model,
+                notify_splitwise_prefill_and_resume_later(self.model_executor.model_config.model,
                                            self.scheduler[virtual_engine],
                                            scheduler_outputs, continuation)
             # Execute the model.
@@ -264,7 +264,7 @@ class _AsyncLLMEngine(LLMEngine):
             if is_splitwise_d and not output:
                 return []
         else:
-            if get_kvcc().has_running_io():
+            if has_uncompleted_splitwise_io():
                 await self.model_executor.complete_io_async()
             output = []
 

@@ -19,7 +19,7 @@ from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.platforms import current_platform
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sequence import ExecuteModelRequest
-from vllm.splitwise.splitwise import initialize_kvcc
+from vllm.splitwise.splitwise import initialize_splitwise
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.embedding_model_runner import EmbeddingModelRunner
 from vllm.worker.model_runner import GPUModelRunnerBase, ModelRunner
@@ -347,7 +347,7 @@ def init_worker_distributed_environment(
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)
 
-    initialize_kvcc()
+    initialize_splitwise()
 
 
 def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype):

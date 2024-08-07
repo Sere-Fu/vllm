@@ -48,7 +48,9 @@ from vllm.sampling_params import SamplingParams
 from vllm.sequence import (IntermediateTensors, SamplerOutput,
                            SequenceGroupMetadata)
 from vllm.splitwise.request import SplitwiseRequest
-from vllm.splitwise.splitwise import get_kvcc, recv_kv_caches_and_resume_later
+from vllm.splitwise.splitwise import (complete_splitwise_io,
+                                      recv_splitwise_kv_caches_and_resume_later,
+                                      send_splitwise_tensors)
 from vllm.utils import (CudaMemoryProfiler, get_kv_cache_torch_dtype, is_hip,
                         is_pin_memory_available, make_tensor_with_pad)
 from vllm.worker.model_runner_base import (
@@ -1354,7 +1356,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     logits=logits_buf,
                     sampling_metadata=model_input.sampling_metadata,
                 )
-            recv_kv_caches_and_resume_later(model_input.splitwise_request,
+            recv_splitwise_kv_caches_and_resume_later(model_input.splitwise_request,
                         kv_caches, model_input.attn_metadata.slot_mapping, self.kv_cache_dtype,
                         self.model.config, model_input.input_tokens.shape[0], self.model_config.dtype, self.device,
                         self.vocab_size, logits_callback)
@@ -1367,7 +1369,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             intermediate_tensors=intermediate_tensors,
             **multi_modal_kwargs,
             **seqlen_agnostic_kwargs)
-        get_kvcc().complete_io_and_dispatch_pending()
+        complete_splitwise_io()
 
         # Compute the logits in the last pipeline stage.
         if not get_pp_group().is_last_rank:
@@ -1377,9 +1379,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                                            model_input.sampling_metadata)
 
         if model_input.splitwise_request and model_input.splitwise_request.decoding_rank:
-            kvcc = get_kvcc()
-            # print(f'👹 {kvcc.next_id()}@{time.time()}: issue isend logits: shape={logits.shape}')
-            kvcc.isend(logits, dst=model_input.splitwise_request.decoding_rank)
+            send_splitwise_tensors(logits, dst=model_input.splitwise_request.decoding_rank)
 
         if not self.is_driver_worker:
             return []

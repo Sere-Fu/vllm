@@ -8,7 +8,7 @@ from vllm_flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from vllm import _custom_ops as ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
-from vllm.splitwise.splitwise import get_kvcc
+from vllm.splitwise.splitwise import send_splitwise_tensors
 
 
 class FlashAttentionBackend(AttentionBackend):
@@ -288,12 +288,11 @@ class FlashAttentionImpl(AttentionImpl):
         key = key.view(-1, self.num_kv_heads, self.head_size)
         value = value.view(-1, self.num_kv_heads, self.head_size)
 
-
         if attn_metadata.decoding_rank is not None:
-            kvcc = get_kvcc()
-            # print(f'👹isend: kv shape={key.shape}')
-            kvcc.isend(key.contiguous(), attn_metadata.decoding_rank)
-            kvcc.isend(value.contiguous(), attn_metadata.decoding_rank)
+            send_splitwise_tensors(
+                [key.contiguous(), value.contiguous()],
+                attn_metadata.decoding_rank
+            )
 
         if kv_cache is not None:
             key_cache = kv_cache[0]
