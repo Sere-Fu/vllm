@@ -175,8 +175,8 @@ class OpenAIServing:
                              EmbeddingRequest]
     ) -> Optional[SplitwiseRequest]:
         if request.global_scheduler_output and request.global_scheduler_output.compute and request.global_scheduler_output.compute.policy == 'split':
-            return SplitwiseRequest(prefill_endpoint=f"http://{request.global_scheduler_output.compute.prompt_worker_address}:/v1/completions",
-                                    decoding_rank=dist.get_rank())
+            return SplitwiseRequest(prefill_endpoint=f"http://{request.global_scheduler_output.compute.prompt_worker_address}/v1/completions",
+                    decoding_rank=None)
         if request.prefill_endpoint is None and request.decoding_rank is None:
             return None
         return SplitwiseRequest(prefill_endpoint=request.prefill_endpoint,
