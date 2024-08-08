@@ -5,7 +5,6 @@ from typing import (AsyncIterator, Callable, Dict, Iterable, List, Optional,
                     Set, Tuple, Type, Union)
 
 from transformers import PreTrainedTokenizer
-import torch
 
 import vllm.envs as envs
 from vllm.config import DecodingConfig, ModelConfig

@@ -30,6 +30,9 @@ class LazyBuf:
 
 
 class KVCacheCoordinator:
+    """
+    Coordinator for managing the in-flight KV Cache IOs.
+    """
     MAX_WIP = 200
 
     def __init__(self):
@@ -76,7 +79,6 @@ class KVCacheCoordinator:
             buf, op, cb = self.pending.popleft()
             self._invoke(buf, op, cb)
 
-
     def has_running_io(self):
         return len(self.wip) > 0 or len(self.pending) > 0
 
@@ -101,6 +103,12 @@ def complete_splitwise_io():
 def notify_splitwise_prefill_and_resume_later(model: str, scheduler: Scheduler,
                                               scheduler_outputs: SchedulerOutputs,
                                               out_continuation: Callable[[List[RequestOutput]], bool]):
+    """
+    Notify the prefill instance to process the request. Once the prefill instance is
+    scheduled to the request, it will send the KV cache layer by layer during
+    the prefilling process. The current process will continue after the receive of
+    KV cache and logits.
+    """
     assert len(scheduler_outputs.scheduled_seq_groups) == 1
     seq_group: SequenceGroup = scheduler_outputs.scheduled_seq_groups[0].seq_group
     assert seq_group.splitwise_request.prefill_endpoint is not None
@@ -126,7 +134,7 @@ def notify_splitwise_prefill_and_resume_later(model: str, scheduler: Scheduler,
         try:
             out_continuation(output)
             scheduler.running.append(seq_group)
-        except KeyError: # The request was cancelled
+        except KeyError:  # The request was cancelled
             pass
     asyncio.create_task(continuation())
 
@@ -136,6 +144,13 @@ def recv_splitwise_kv_caches_and_resume_later(
         kv_caches: List[torch.Tensor], slot_mapping: torch.Tensor, kv_cache_dtype: str,
         config: PretrainedConfig, token_len: int, model_dtype: torch.dtype, device: torch.device,
         vocab_size: int, logits_callback: Callable[[torch.Tensor], SamplerOutput]):
+    """
+    Begin receiving the KV Caches and logits that the Prefill instance will send,
+    and after receiving, convert KV Caches into Cache blocks. When the logits are
+    received, we will perform sampling and notify the LLM engine process to continue
+    execution through the future. To reduce the consumption of GPU memory, the buffer
+    is allocated only when the irecv request is actually called.
+    """
 
     kv_heads = config.num_attention_heads
     if hasattr(config, 'num_key_value_heads'):

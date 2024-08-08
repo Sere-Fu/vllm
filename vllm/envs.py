@@ -4,9 +4,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 if TYPE_CHECKING:
     VLLM_HOST_IP: str = ""
     VLLM_PORT: Optional[int] = None
-    VLLM_WORLD: int = 1
-    VLLM_RANK: int = 0
-    VLLM_MASTER_ADDRESS: str = ""
+    VLLM_WORLD: Optional[int] = None
+    VLLM_RANK: Optional[int] = None
     VLLM_USE_MODELSCOPE: bool = False
     VLLM_RINGBUFFER_WARNING_INTERVAL: int = 60
     VLLM_INSTANCE_ID: Optional[str] = None
@@ -260,9 +259,9 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     lambda: int(os.getenv("VLLM_FUSED_MOE_CHUNK_SIZE", "65536")),
 
     "VLLM_WORLD":
-    lambda: int(os.getenv("VLLM_WORLD", "1")),
+    lambda: None if os.getenv("VLLM_WORLD", None) is None else  int(os.getenv("VLLM_WORLD")),
     "VLLM_RANK":
-    lambda: int(os.getenv("VLLM_RANK", "0")),
+    lambda: None if os.getenv("VLLM_RANK", None) is None else  int(os.getenv("VLLM_RANK")),
 }
 
 # end-env-vars-definition
